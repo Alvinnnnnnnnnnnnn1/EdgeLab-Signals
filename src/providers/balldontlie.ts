@@ -10,6 +10,16 @@ const stat = z.number().int().nonnegative().nullable().optional();
 const statGameSchema=z.object({id:nativeId,date:z.string().optional(),season:z.number().int(),status:z.string(),datetime:z.string().nullable().optional(),home_team_id:nativeId.optional(),visitor_team_id:nativeId.optional(),home_team:teamSchema.optional(),visitor_team:teamSchema.optional()});
 const rowSchema = z.object({ id: nativeId, fg3a:stat, min: z.union([z.string(), z.number()]).nullable().optional(), pts: stat, reb: stat, ast: stat, fg3m: stat, player: z.object({ id: nativeId, first_name: z.string(), last_name: z.string() }), team: teamSchema, game: statGameSchema });
 const pageSchema = z.object({ data: z.array(z.unknown()), meta: z.object({ next_cursor: z.number().int().nullable().optional() }).optional() });
+export function bdlPhase(raw:unknown):NonNullable<GameLog['research']>['phase']{
+  const g=z.object({postseason:z.boolean().optional(),season_type:z.string().optional(),ist_stage:z.string().nullable().optional()}).parse(raw);
+  if(g.season_type==='preseason')return'preseason';
+  if(g.ist_stage){
+    if(g.ist_stage==='Championship')return'cup';
+    if(/^(?:East|West) Group [ABC]$|^(?:East|West) (?:Quarterfinal|Semifinal)$|^(?:Group Play|Quarterfinals?|Semifinals?)$/i.test(g.ist_stage))return'regular';
+    return'unknown';
+  }
+  return g.postseason===true||g.season_type==='playoffs'?'playoffs':g.season_type==='ist'?'unknown':g.postseason===false||g.season_type==='regular'?'regular':'unknown';
+}
 export function parseMinutes(value: unknown): number | null {
   if (typeof value === 'number') return Number.isFinite(value) && value >= 0 && value <= 75 ? value : null;
   if (typeof value !== 'string' || !/^\d{1,2}(:[0-5]\d|\.\d+)?$/.test(value)) return null;
@@ -34,7 +44,7 @@ export function normalizeBDLStats(raw: unknown, receipt: Receipt, fixtures: {bod
       const minutes = parseMinutes(r.min),supportingSources=fixture?[fixture.receipt]:[];
       const observedAt=[receipt.retrievedAt,...supportingSources.map(s=>s.retrievedAt)].sort((a,b)=>ms(a)-ms(b)).at(-1)!;
       logs.push(gameLogSchema.parse({ event: bdlEvent(full), playerId: `bdl:nba:player:${r.player.id}`, player: `${r.player.first_name} ${r.player.last_name}`, teamId: `bdl:nba:team:${r.team.id}`, completedAt: null,
-        observedAt, supportingSources, research:{phase:full.season_type==='preseason'?'preseason':full.ist_stage?'cup':full.postseason===true?'playoffs':full.postseason===false?'regular':'unknown',overtimePeriods:full.period!==undefined&&full.period>=4?full.period-4:null,threeAttempts:r.fg3a??null,rosterOpportunityVerified:false}, final: true, minutes, participated: minutes !== null && minutes > 0 ? true : null,
+        observedAt, supportingSources, research:{phase:bdlPhase(full),overtimePeriods:full.period!==undefined&&full.period>=4?full.period-4:null,threeAttempts:r.fg3a??null,rosterOpportunityVerified:false}, final: true, minutes, participated: minutes !== null && minutes > 0 ? true : null,
         stats: { points: r.pts ?? null, rebounds: r.reb ?? null, assists: r.ast ?? null, threes: r.fg3m ?? null }, source: receipt }));
     } catch (e) { exclusions.push(e instanceof Error ? e.message : 'Invalid stat row'); }
   }
@@ -53,6 +63,11 @@ export class BDLProvider {
     const days=(Date.parse(endDate)-Date.parse(startDate))/86400000+1;
     if(days<1||days>31||endDate>now.slice(0,10))throw new Error('League backfill requires a nonfuture window of 1–31 days');
     return this.collect(null,startDate,endDate,now,season);
+  }
+  async maintenanceStats(season:number,startDate:string,endDate:string,now:string,epoch:string){
+    for(const day of [startDate,endDate])z.iso.date().parse(day);
+    if(Date.parse(endDate)-Date.parse(startDate)>3*86400000||endDate>now.slice(0,10))throw new Error('Maintenance scope must be at most four nonfuture dates');
+    return this.collect(null,startDate,endDate,now,season,`ingest:maintenance:${epoch}:${season}:${startDate}:${endDate}`);
   }
   /** Fixture pagination is independent of player selection. Historical coverage
    * survives TTL expiry and can serve contained windows and the V1.2 checkpoints. */
@@ -87,9 +102,9 @@ export class BDLProvider {
     });
     return{complete:cursor===undefined,reused:false,exclusions};
   }
-  private async collect(playerNativeIds:string[]|null,startDate:string,endDate:string,now:string,season?:number){
+  private async collect(playerNativeIds:string[]|null,startDate:string,endDate:string,now:string,season?:number,keyOverride?:string){
     if (this.config.providers.balldontlie.tier === 'free') throw new Error('BDL Free excludes player stats; upgrade not activated');
-    const key = playerNativeIds?`ingest:${playerNativeIds.slice().sort().join(',')}:${startDate}:${endDate}`:`ingest:league:${season}:${startDate}:${endDate}`;
+    const key = keyOverride??(playerNativeIds?`ingest:${playerNativeIds.slice().sort().join(',')}:${startDate}:${endDate}`:`ingest:league:${season}:${startDate}:${endDate}`);
     let checkpoint = this.store.get<{ cursor: number | null; complete: boolean; at: string; fixturesComplete?:boolean;seen?:number[];pages?:number;rows?:number;excluded?:number }>(key);
     if (checkpoint?.complete && (endDate<now.slice(0,10)||ms(now)-ms(checkpoint.at)<900000)) return { inserted: 0, complete: true, exclusions: [] };
     if (checkpoint?.complete) checkpoint=null;

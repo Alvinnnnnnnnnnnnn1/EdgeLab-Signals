@@ -3,13 +3,13 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { gameLogSchema, hash, ms, stamp, type GameLog, type League, researchMetadataSchema } from '../core/domain';
 import { Store } from '../core/store';
-export const DATASET_VERSION = 'player-games/1.1.0';
+export const DATASET_VERSION = 'player-games/1.4.0';
 export const metadataSchema = researchMetadataSchema;
 export type Metadata = z.infer<typeof metadataSchema>;
 export const unknownMetadata = (): Metadata => ({ phase: 'unknown', overtimePeriods: null, threeAttempts: null, rosterOpportunityVerified: false });
 export interface ResearchRow { log: GameLog; metadata: Metadata; }
 export const datasetSchema = z.object({
-  version: z.literal(DATASET_VERSION), id: z.string().regex(/^[a-f0-9]{64}$/), createdAt: stamp,
+  version: z.enum(['player-games/1.1.0',DATASET_VERSION]), id: z.string().regex(/^[a-f0-9]{64}$/), createdAt: stamp,
   licenseReferences: z.array(z.string().min(8)),
   rows: z.array(z.object({ log: gameLogSchema, metadata: metadataSchema }).strict()),
   sourceReceipts: z.array(z.object({ receipt: z.unknown(), body: z.string() })),

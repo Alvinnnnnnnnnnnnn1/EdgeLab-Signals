@@ -1,6 +1,6 @@
 import { hash, ms, type League, type Prop } from '../core/domain';
 import { auditDataset, rowKey, utcDay, validateRows, type Dataset, type ResearchRow } from './dataset';
-import { features, type FeatureSet, type KnowledgeMode } from './features';
+import { preparedFeatures, type FeatureSet, type KnowledgeMode } from './features';
 import { fitBoosted } from './boost';
 import { controls, modelSpec, predict, RESEARCH_VERSION, type ModelSpec } from './models';
 import { calibrateCDF, fitCalibration, type Calibration } from './calibration';
@@ -47,9 +47,10 @@ export function runExperiment(dataset: Dataset, league: League, prop: Prop, at: 
   const all = validateRows(dataset.rows, at), source = all.filter(r => r.log.event.league === league && ['regular', 'playoffs'].includes(r.metadata.phase));
   const latest = new Map<string, ResearchRow>(); for (const r of source) latest.set(rowKey(r), r);
   const examples: Example[] = [], participation: { date: string; probability: number; y: number }[] = [];
+  const getFeatures=preparedFeatures(source,mode);
   for (const row of latest.values()) {
     if(targetSeasons&&!targetSeasons.includes(row.log.event.season))continue;
-    const f = features(source, row.log, prop, mode); if (!f) continue;
+    const f = getFeatures(row.log, prop); if (!f) continue;
     if (row.metadata.rosterOpportunityVerified && row.log.participated !== null && f.participation !== null) participation.push({ date: utcDay(row.log.event.startsAt), probability: f.participation, y: Number(row.log.participated) });
     if (row.log.participated === true && row.log.stats[prop] !== null && row.log.minutes !== null) examples.push({ row, features: f });
   }

@@ -21,6 +21,9 @@ export function priorRows(rows: ResearchRow[], cutoff: string, mode: KnowledgeMo
 const avg = (xs: number[]) => xs.reduce((a, b) => a + b, 0) / xs.length;
 export function features(rows: ResearchRow[], target: Pick<ResearchRow['log'], 'event' | 'playerId' | 'teamId'>, prop: Prop, mode: KnowledgeMode, asOf?:string): FeatureSet | null {
   const available = priorRows(rows, asOf??target.event.startsAt, mode).filter(r => r.log.event.league === target.event.league);
+  return availableFeatures(available,target,prop);
+}
+function availableFeatures(available:ResearchRow[],target:Pick<ResearchRow['log'],'event'|'playerId'|'teamId'>,prop:Prop):FeatureSet|null{
   const player = available.filter(r => r.log.playerId === target.playerId).slice(-120);
   const history = player.filter(r => r.log.participated === true && r.log.minutes !== null && r.log.minutes > 0 && r.log.stats[prop] !== null);
   if (history.length < 10) return null;
@@ -43,4 +46,16 @@ export function features(rows: ResearchRow[], target: Pick<ResearchRow['log'], '
   return { playerId: target.playerId, league: target.event.league, prop, cutoff: target.event.startsAt, history, opportunities:roster, leagueHistory, values,
     names: ['last5', 'last10', 'ewa', 'seasonShrunk', 'minutes', 'minutesSD', 'rate', 'restDays', 'home', 'teamChanged'],
     missing: ['verified injury/availability history', 'usage', 'pace', 'travel', 'opponent defensive opportunities'], last5, last10, ewa, seasonShrunk: seasonMean, rate, minutes, minutesSD, participation, recentTeamChanged: changed };
+}
+/** Immutable experiment-local index: numeric clocks are parsed once. Every
+ * revision, strict observation cutoff and UTC-day boundary matches priorRows. */
+export function preparedFeatures(rows:ResearchRow[],mode:KnowledgeMode){
+  const indexed=rows.map(r=>({r,key:rowKey(r),day:utcDay(r.log.event.startsAt),start:ms(r.log.event.startsAt),observed:ms(r.log.observedAt),completed:r.log.completedAt?ms(r.log.completedAt):null,known:Math.max(ms(r.log.observedAt),...[r.log.source,...(r.log.supportingSources??[])].map(s=>ms(s.retrievedAt)))}));
+  const daily=mode==='retrospective'&&indexed.every(r=>r.completed===null),cache=new Map<string,ResearchRow[]>();
+  return(target:Pick<ResearchRow['log'],'event'|'playerId'|'teamId'>,prop:Prop,asOf?:string)=>{
+    const cutoff=asOf??target.event.startsAt,day=utcDay(cutoff),time=ms(cutoff),key=`${target.event.league}:${daily?day:time}`;
+    let available=cache.get(key);
+    if(!available){const latest=new Map<string,typeof indexed[number]>();for(const row of indexed){if(row.r.log.event.league!==target.event.league||row.day>=day||row.completed!==null&&row.completed>=time||mode==='as-of'&&row.known>=time)continue;const previous=latest.get(row.key);if(!previous||previous.observed<row.observed)latest.set(row.key,row);}available=[...latest.values()].sort((a,b)=>a.start-b.start).map(r=>r.r);cache.set(key,available);}
+    return availableFeatures(available,target,prop);
+  };
 }

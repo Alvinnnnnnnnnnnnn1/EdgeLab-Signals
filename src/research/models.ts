@@ -3,7 +3,7 @@ import { hash, type Prop } from '../core/domain';
 import { average, negativeBinomial, attemptMakeDistribution, mixPMFs, normal, rng, sampleCount, summary, COUNT_CAP } from './distributions';
 import { boostedMean, type BoostedModel } from './boost';
 import type { FeatureSet } from './features';
-export const RESEARCH_VERSION = 'prop-research/1.1.0';
+export const RESEARCH_VERSION = 'prop-research/1.4.0';
 export const researchCandidateSchema = z.enum(['last5', 'last10', 'ewa', 'season-shrunk', 'recent-rate', 'hierarchical-nb', 'minutes-mc', 'attempts-beta-binomial', 'boosted-stumps-nb', 'boosted-form-only', 'ensemble']);
 export type ResearchCandidate = z.infer<typeof researchCandidateSchema>;
 export const controls: ResearchCandidate[] = ['last5', 'last10', 'ewa', 'season-shrunk', 'recent-rate'];
@@ -51,9 +51,13 @@ export function predict(f: FeatureSet, spec: ModelSpec): Prediction | null {
       if (f.prop !== 'threes' || f.history.some(r => r.metadata.threeAttempts === null)) return null;
       const attempts = f.history.map(r => r.metadata.threeAttempts!), total = attempts.reduce((a, b) => a + b, 0), made = counts.reduce((a, b) => a + b, 0);
       const leagueKnown = f.leagueHistory.filter(r => r.metadata.threeAttempts !== null), leagueAttempts = leagueKnown.reduce((n, r) => n + r.metadata.threeAttempts!, 0);
-      if (!total || !leagueAttempts) return null;
+      // A genuine zero-attempt player still belongs in the common cohort.
+      // Missing reference exposure is different from observed zero production.
+      const leagueMinutes=leagueKnown.reduce((n,r)=>n+r.log.minutes!,0);
+      if (!(leagueAttempts>0)||!(leagueMinutes>0)||!Number.isFinite(leagueAttempts+leagueMinutes)||made>total) return null;
       const leaguePct = leagueKnown.reduce((n, r) => n + r.log.stats.threes!, 0) / leagueAttempts;
-      const attemptMean = attempts.reduce((n, a, i) => n + a * weights[i], 0) / f.history.reduce((n, r, i) => n + r.log.minutes! * weights[i], 0) * f.minutes;
+      if(!Number.isFinite(leaguePct)||leaguePct<0||leaguePct>1)return null;
+      const attemptMean = (attempts.reduce((n, a, i) => n + a * weights[i], 0)+spec.priorMinutes*leagueAttempts/leagueMinutes) / (f.history.reduce((n, r, i) => n + r.log.minutes! * weights[i], 0)+spec.priorMinutes) * f.minutes;
       const aMean = average(attempts), aVariance = average(attempts.map(v => (v - aMean) ** 2));
       pmf = attemptMakeDistribution(attemptMean, Math.max(attemptMean, aVariance), made + .5 + 20 * leaguePct, total - made + .5 + 20 * (1 - leaguePct)); break;
     }

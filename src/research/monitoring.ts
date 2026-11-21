@@ -4,6 +4,7 @@ import { pairedDifference, scoreRows, type ScoredPrediction } from './scoring';
 import { thresholds, type Experiment } from './experiment';
 import { utcDay } from './dataset';
 import {artifactSchema,researchValidationSchema,type ResearchArtifact,type ResearchValidation} from './inference';
+import { RESEARCH_VERSION } from './models';
 export function monitor(store: Store, artifact: ResearchArtifact, artifactHash: string, league: ResearchValidation['league'], prop: ResearchValidation['prop'], at: string) {
   const scores = new Map<string, { selected: ScoredPrediction; baseline: ScoredPrediction }>(),participations=new Map<string,{p:number;y:number}>(), finals = store.logs();
   for (const entry of store.screenings()) {
@@ -40,7 +41,7 @@ export function certificate(report: Experiment, store: Store, at: string): Resea
   const selected=report.models.find(m=>m.id===report.selected)!,baseline=report.baselineMetrics,m=selected.metrics;
   const statistical = report.mode==='as-of'&&m.playerGames>=200&&m.players>=10&&m.dates>=30&&report.stageCounts.calibrationFit>=200&&report.stageCounts.calibrationChoose>=200&&m.ece<=.05&&m.maxCalibrationGap!==null&&m.maxCalibrationGap<=.08&&m.coverage80>=.70&&m.coverage80<=.90&&selected.pairDate.interval95.crps[1]<=0&&m.brier<=baseline.brier&&m.logLoss<=baseline.logLoss&&report.quality.unknownOvertime===0&&report.quality.unknownParticipation===0&&report.participation.eligibleOpportunities>=200&&report.participation.bias!==null&&Math.abs(report.participation.bias)<=.05;
   if(statistical!==report.promotion.statisticalEligible)throw new Error('Research statistical gate mismatch');
-  return { kind: 'signal-research-validation/1.1.0', modelVersion: 'prop-research/1.1.0', league: report.league, prop: report.prop, generatedAt: at, datasetHash: report.datasetId,
+  return { kind: 'signal-research-validation/1.1.0', modelVersion: RESEARCH_VERSION, league: report.league, prop: report.prop, generatedAt: at, datasetHash: report.datasetId,
     reportHash: hash(report), artifact: artifactSchema.parse(report.artifact), artifactHash: report.artifactHash!, selected: report.selected!, eligible: statistical && monitored.eligible, asOfVerified: report.mode === 'as-of', simulated: false,
     samples: report.models.find(m => m.id === report.selected)!.metrics.playerGames, players: report.models.find(m => m.id === report.selected)!.metrics.players, dates: report.models.find(m => m.id === report.selected)!.metrics.dates,
     monitoringHash: monitored.hash };
