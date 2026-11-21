@@ -1,5 +1,7 @@
 # Source feasibility audit — 21 November 2026 (Melbourne)
 
+Later V1.2 evidence: [authenticated BDL integration results](v12-bdl-integration.md). NBA ALL-STAR player statistics now work and 81 genuine player-games are imported; the initial unconfigured/zero-request findings below are preserved as historical observations.
+
 This separates published capability, old V6 observations, and new-project live tests. No inherited credential, quota receipt, source worker or dataset is reused. No plan or trial was purchased. API adapters alone do not establish current data access.
 
 | Source | Documented capability | Access / cost | New project evidence / decision |

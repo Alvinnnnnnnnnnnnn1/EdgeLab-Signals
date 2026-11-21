@@ -1,6 +1,8 @@
 # V1.1 model evaluation and handoff — 21 November 2026
 
-**Result: blocked by genuine data access.** This task implemented and component-tested the expanded research engine, but did not meet the definition of success of a real independently evaluated player-prop system. There are **zero genuine NBA and zero genuine NBL player-games**, zero genuine training runs, zero genuine test results and zero alert-ready markets. Missing measurements below are not replaced with synthetic numbers or other authors' claims.
+Later V1.2 evidence: [authenticated BDL integration and genuine retrospective benchmark](v12-bdl-integration.md) records 81 NBA player-games and executed experiments for four props. No model is promotion eligible. The V1.1 findings below describe the earlier snapshot.
+
+**Original V1.1 result: blocked by genuine data access.** This task implemented and component-tested the expanded research engine, but did not meet the definition of success of a real independently evaluated player-prop system. There are **zero genuine NBA and zero genuine NBL player-games**, zero genuine training runs, zero genuine test results and zero alert-ready markets. Missing measurements below are not replaced with synthetic numbers or other authors' claims.
 
 ## Answers to the nine acceptance questions
 

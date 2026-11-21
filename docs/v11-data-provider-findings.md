@@ -1,6 +1,8 @@
 # V1.1 data/provider findings — 21 November 2026
 
-**Actual genuine player-games acquired: NBA 0, NBL 0.** No genuine outcome dataset was downloaded, no authenticated sports-data requests were made, and no account, trial or subscription was activated. Existing quotas, credentials and V6 records were untouched. The source research below distinguishes capability from our permission, entitlement and observed coverage.
+Later V1.2 evidence: [authenticated BDL integration results](v12-bdl-integration.md) records working NBA ALL-STAR access and 81 genuine NBA player-games. The V1.1 acquisition findings below are historical.
+
+**Original V1.1 genuine player-games acquired: NBA 0, NBL 0.** No genuine outcome dataset was downloaded, no authenticated sports-data requests were made, and no account, trial or subscription was activated. Existing quotas, credentials and V6 records were untouched. The source research below distinguishes capability from our permission, entitlement and observed coverage.
 
 ## Access matrix
 
