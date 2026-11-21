@@ -1,5 +1,7 @@
 # Local operating guide
 
+V1.4.1: [Melbourne daytime windows, quiet-hour delivery and optional bookmaker preparation](v141-daytime-research.md). The 60-second heartbeat is separate from acquisition; independent T−90/T−20 source tasks retain overnight fixture deadlines. Sportsbet remains primary; TAB/Ladbrokes adapters are offline preparation, with no new paid allowance or verified NBA prop coverage.
+
 Current research-only worker, Telegram canary, explicit operating modes and activation/stop commands: [V1.4 live research foundation](v14-live-research-foundation.md). New installations stay disabled; research/SHADOW and status delivery are separate from qualified opportunity alerts. Use the new research service rather than activating the legacy quote-screening worker below.
 
 ## Start without any live services

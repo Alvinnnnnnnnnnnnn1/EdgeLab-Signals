@@ -31,3 +31,29 @@ test('status digests require an actual journal and explicit opt-in; nonallowlist
     process.env.TELEGRAM_CHAT_ID='456';await assert.rejects(d.transport.verify(),/not_allowlisted/);assert.equal(d.transport.verified(),false);
   }finally{d.close();}
 });
+
+test('routine digest survives quiet hours and restarts, then drains once at 07:00 without consuming overnight attempts',async()=>{
+  const d=setup();try{
+    d.config.telegram.statusEnabled=true;await d.transport.verify();d.tick(2*3600000); // 01:00 Melbourne
+    d.store.db.prepare('INSERT INTO research_runs VALUES (?,?,?)').run('overnight',d.clock(),JSON.stringify({state:'deferred',fixturesReviewed:2,playersExamined:3,forecastsFrozen:0,forecastsGraded:0,playersExcluded:3,marketStatus:'MARKET_DATA_NOT_AUTHORISED'}));
+    const id=enqueueResearchDigest(d.store,'overnight',d.clock());await dispatchTelegramStatus(d.store,d.config,d.transport,{clock:d.clock});
+    let row=d.store.db.prepare('SELECT state,attempts,next_at FROM telegram_outbox WHERE id=?').get(id)!;assert.equal(row.state,'pending');assert.equal(row.attempts,0);assert.equal(row.next_at,'2026-11-21T20:00:00.000Z');assert.equal(d.sends(),0);
+    d.tick(6*3600000-1000);await dispatchTelegramStatus(d.store,d.config,d.transport,{clock:d.clock});assert.equal(d.sends(),0);
+    d.tick(1000);await dispatchTelegramStatus(d.store,d.config,d.transport,{clock:d.clock});await dispatchTelegramStatus(d.store,d.config,d.transport,{clock:d.clock});
+    row=d.store.db.prepare('SELECT state,attempts FROM telegram_outbox WHERE id=?').get(id)!;assert.equal(row.state,'accepted');assert.equal(row.attempts,1);assert.equal(d.sends(),1);
+  }finally{d.close();}
+});
+test('Telegram opportunity policy expires early fixtures instead of releasing them after quiet hours',()=>{
+  const d=setup();try{d.tick(2*3600000);const signal={decision:{quote:{quotedAt:d.clock(),expiresAt:'2026-11-21T14:03:00.000Z',event:{startsAt:'2026-11-21T17:00:00.000Z'}}}} as Signal;
+    assert.equal(d.transport.deliveryWindow(signal,d.clock()).state,'expired');assert.equal(d.sends(),0);
+  }finally{d.close();}
+});
+
+test('crossing 00:30 between outbox claim and transport preserves the queued digest',async()=>{
+  const d=setup();try{d.config.telegram.statusEnabled=true;await d.transport.verify();d.tick(90*60000);
+    d.store.db.prepare('INSERT INTO research_runs VALUES (?,?,?)').run('boundary',d.clock(),JSON.stringify({state:'completed',fixturesReviewed:0,playersExamined:0,forecastsFrozen:0,forecastsGraded:0,playersExcluded:0,marketStatus:'MARKET_DATA_NOT_AUTHORISED'}));
+    const id=enqueueResearchDigest(d.store,'boundary','2026-11-21T13:29:59.000Z');
+    await dispatchTelegramStatus(d.store,d.config,d.transport,{clock:()=> '2026-11-21T13:29:59.000Z'});
+    const row=d.store.db.prepare('SELECT state,attempts,next_at FROM telegram_outbox WHERE id=?').get(id)!;assert.equal(row.state,'pending');assert.equal(row.attempts,0);assert.equal(row.next_at,'2026-11-21T20:00:00.000Z');assert.equal(d.sends(),0);
+  }finally{d.close();}
+});

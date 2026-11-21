@@ -4,8 +4,9 @@ import { Store,type Signal } from './store';
 import { hash,ms,nowISO } from './domain';
 import { TransportFailure,type NotificationTransport } from './messaging';
 import type { Fetcher } from '../providers/http';
+import { notificationWindow } from '../research/schedule';
 
-export class TelegramFailure extends TransportFailure {constructor(kind:string,uncertain:boolean,public retryAfter:number|null=null){super(kind,uncertain);}}
+export class TelegramFailure extends TransportFailure {constructor(kind:string,uncertain:boolean,public retryAfter:number|null=null,public deferUntil:string|null=null){super(kind,uncertain);}}
 export const telegramBinding=()=>hash([process.env.TELEGRAM_BOT_TOKEN??'',process.env.TELEGRAM_CHAT_ID??'']);
 export class Telegram implements NotificationTransport{
   constructor(private config:Config,private store:Store,private fetcher:Fetcher=fetch,private clock=nowISO){}
@@ -39,10 +40,12 @@ export class Telegram implements NotificationTransport{
   }
   async send(signal:Signal,text:string){
     if(signal.simulated||!signal.decision.qualified||!this.config.deliveryEnabled||!this.config.telegram.qualifiedEnabled||this.config.operatingMode!=='qualified')throw new TelegramFailure('qualified_telegram_disabled_or_ineligible',false);
+    if(this.deliveryWindow(signal,this.clock()).state!=='ready')throw new TelegramFailure('telegram_quiet_or_expired',false);
     return this.submit(text);
   }
+  deliveryWindow(signal:Signal,at:string){const q=signal.decision.quote;return notificationWindow(at,new Date(Math.min(ms(q.expiresAt),ms(q.event.startsAt)-120000,ms(q.quotedAt)+this.config.screen.maxQuoteAgeSeconds*1000)).toISOString());}
   async status(){return{deliveredAt:null,failed:false};} // Bot API has no device delivery/read receipt.
-  async sendResearch(text:string,canary=false){if(!canary&&!this.config.telegram.statusEnabled)throw new TelegramFailure('research_status_delivery_disabled',false);return this.submit(text);}
+  async sendResearch(text:string,canary=false){if(!canary&&!this.config.telegram.statusEnabled)throw new TelegramFailure('research_status_delivery_disabled',false);const window=notificationWindow(this.clock());if(!canary&&window.quiet)throw new TelegramFailure('telegram_quiet_hours',false,null,window.nextAt);return this.submit(text);}
 }
 
 const digestSchema=z.object({fixtures:z.number().int().nonnegative(),players:z.number().int().nonnegative(),frozen:z.number().int().nonnegative(),graded:z.number().int().nonnegative(),excluded:z.number().int().nonnegative()}).strict();
@@ -68,9 +71,14 @@ export async function dispatchTelegramStatus(store:Store,config:Config,transport
     for(const row of rows){
       if(!store.renew('telegram-status',lease,clock(),60))break;
       const canary=row.kind==='test'&&row.id===options.canaryId;if(row.kind==='test'&&!canary||row.kind==='research-status'&&!config.telegram.statusEnabled||row.binding!==telegramBinding()||row.attempts>=3)continue;
+      if(!canary){const window=notificationWindow(clock());if(window.quiet){store.db.prepare('UPDATE telegram_outbox SET next_at=?,error=? WHERE id=?').run(window.nextAt,'MELBOURNE_QUIET_HOURS',row.id);continue;}}
       if(!store.db.prepare("UPDATE telegram_outbox SET state='sending',attempts=attempts+1 WHERE id=? AND state IN ('pending','retryable_failed')").run(row.id).changes)continue;
       try{const result=await transport.sendResearch(JSON.parse(row.body).text,canary);store.db.prepare("UPDATE telegram_outbox SET state='accepted',message_id=?,error=NULL WHERE id=?").run(result.guid,row.id);accepted++;}
-      catch(e){const failure=e instanceof TelegramFailure?e:new TelegramFailure('telegram_unknown_failure',true),retry=failure.retryAfter!==null;store.db.prepare('UPDATE telegram_outbox SET state=?,error=?,next_at=? WHERE id=?').run(failure.uncertain?'uncertain':retry?'retryable_failed':'rejected',failure.kind,new Date(ms(clock())+(failure.retryAfter??60)*1000).toISOString(),row.id);}
+      catch(e){const failure=e instanceof TelegramFailure?e:new TelegramFailure('telegram_unknown_failure',true),retry=failure.retryAfter!==null;
+        // The clock may cross 00:30 after claim, before transport. No HTTP was
+        // attempted in this case; preserve the queued status and its attempt.
+        if(failure.kind==='telegram_quiet_hours'&&failure.deferUntil){store.db.prepare("UPDATE telegram_outbox SET state='pending',attempts=attempts-1,next_at=?,error=? WHERE id=?").run(failure.deferUntil,'MELBOURNE_QUIET_HOURS',row.id);continue;}
+        store.db.prepare('UPDATE telegram_outbox SET state=?,error=?,next_at=? WHERE id=?').run(failure.uncertain?'uncertain':retry?'retryable_failed':'rejected',failure.kind,new Date(ms(clock())+(failure.retryAfter??60)*1000).toISOString(),row.id);}
     }
     return{accepted,state:'completed',deviceDelivery:'unobservable'};
   }finally{store.release('telegram-status',lease);}

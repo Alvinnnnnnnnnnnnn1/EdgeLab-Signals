@@ -18,10 +18,11 @@ import { livePlan,liveStatus,liveOnce,liveWorker } from './live';
 import { registerResearchModels } from './shadow';
 import { configureMode,prepareLaunchAgent } from './operations';
 import { evaluateMinutes } from './minutes';
+import { researchBooks,MarketBenchmarkAdapter,reviewMarketReceipt } from './market-benchmarks';
 const [command = 'audit', ...args] = process.argv.slice(2);
 function save(path: string, value: unknown) { mkdirSync('.local/research-runs', { recursive: true, mode: 0o700 }); writeFileSync(path, JSON.stringify(value, null, 2), { mode: 0o600, flag: 'wx' }); return path; }
 async function main() {
-  if(command==='help'){console.log(`EdgeLab NBA research\n  live-plan | live-status\n  live-once --dry-run | --execute\n  activate research|shadow --confirm | deactivate --confirm\n  prepare-launchagent | worker\n  collection-plan | coverage\n  collect-plan MAX_REQUESTS [--execute]\n  collect SEASON FROM TO MAX_REQUESTS [--execute]\n  snapshot SOURCE_REFERENCE\n  benchmark DATASET as-of|retrospective [--target-season YYYY] [--prop points|rebounds|assists|threes] [--resume]\n  models-register FROZEN_REPORTS | minutes FROZEN_REPORTS\n  prospective FROZEN_REPORTS | prospective-score\n  odds-plan | odds-coverage PRIVATE_GRANT --execute\nNetwork is quota-gated. Research, SHADOW, status delivery and qualified alerts are separate.`);return;}
+  if(command==='help'){console.log(`EdgeLab NBA research\n  live-plan | live-status\n  live-once --dry-run | --execute\n  activate research|shadow --confirm | deactivate --confirm\n  prepare-launchagent | worker\n  collection-plan | coverage\n  collect-plan MAX_REQUESTS [--execute]\n  collect SEASON FROM TO MAX_REQUESTS [--execute]\n  snapshot SOURCE_REFERENCE\n  benchmark DATASET as-of|retrospective [--target-season YYYY] [--prop points|rebounds|assists|threes] [--resume]\n  models-register FROZEN_REPORTS | minutes FROZEN_REPORTS\n  prospective FROZEN_REPORTS | prospective-score\n  market-plan EXACT_ODDS_EVENT_ID | market-review RETAINED_SOURCE_RECEIPT_ID\n  odds-plan | odds-coverage PRIVATE_GRANT --execute\nNetwork is quota-gated. Research, SHADOW, status delivery and qualified alerts are separate.`);return;}
   const config = loadConfig(), store = new Store(config.database), at = nowISO();
   try {
     const rows = ['audit','snapshot'].includes(command)?researchRows(store):[];
@@ -43,6 +44,10 @@ async function main() {
       if(args.length!==1)throw new Error('Use models-register FROZEN_REPORT_ARRAY');console.log(JSON.stringify(registerResearchModels(store,JSON.parse(readFileSync(args[0],'utf8')),at),null,2));
     }else if(command==='prospective-score'){
       const result={at,verifiedAvailability:scoreProspective(store,at),conditionalShadow:scoreProspective(store,at,'conditional-shadow')};console.log(JSON.stringify({...result,path:save(`.local/research-runs/prospective-score-${at.replaceAll(':','-')}.json`,result)},null,2));
+    }else if(command==='market-plan'){
+      if(args.length!==1)throw new Error('Use market-plan EXACT_ODDS_EVENT_ID; planning makes no requests');console.log(JSON.stringify({state:'prepared_not_authorised',networkRequests:0,adapters:researchBooks.map(book=>new MarketBenchmarkAdapter(book).plan(args[0]))},null,2));
+    }else if(command==='market-review'){
+      if(args.length!==1)throw new Error('Use market-review RETAINED_SOURCE_RECEIPT_ID; no acquisition');const result=reviewMarketReceipt(store,config,args[0],at);console.log(JSON.stringify({...result,path:save(`.local/research-runs/markets-${at.replaceAll(':','-')}.json`,result)},null,2));
     }else if(command==='odds-plan')console.log(JSON.stringify(oddsCoveragePlan(),null,2));
     else if(command==='odds-coverage'){
       if(args.length!==2||args[1]!=='--execute')throw new Error('Use odds-plan first; then odds-coverage PRIVATE_SHARED_GRANT --execute');

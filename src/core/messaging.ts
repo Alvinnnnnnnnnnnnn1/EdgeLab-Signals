@@ -3,6 +3,7 @@ import type { Config } from './config';
 import { Store, type Signal } from './store';
 import type { Fetcher } from '../providers/http';
 export interface NotificationTransport {
+  deliveryWindow?(signal:Signal,at:string):{state:'ready'|'deferred'|'expired';nextAt:string};
   send(signal:Signal,text:string):Promise<{guid:string;deliveredAt:string|null}>;
   reconcile?(signal:Signal,text:string):Promise<{guid:string}|null>;
   status(guid:string):Promise<{deliveredAt:string|null;failed:boolean}>;
@@ -104,6 +105,9 @@ export async function dispatch(store:Store,transport:NotificationTransport,confi
       }
       if(!['pending','failed'].includes(out.state)||out.attempts>=3||ms(out.nextAt)>ms(at))continue;
       if(!quoteFresh(signal.decision.quote,at,config.screen.maxQuoteAgeSeconds,config.scan.minBeforeStartSeconds)){store.transition(out.id,'expired',at,'Original signal quote expired');continue;}
+      const permitted=transport.deliveryWindow?.(signal,at);
+      if(permitted?.state==='expired'){store.transition(out.id,'expired',at,'Opportunity expires before permitted notification window');continue;}
+      if(permitted?.state==='deferred'){store.transition(out.id,'pending',at,'Telegram quiet hours',null,Math.ceil((ms(permitted.nextAt)-ms(at))/1000));continue;}
       let refreshed:Revalidation;
       try{refreshed=await revalidate(signal);}catch{store.transition(out.id,'failed',clock(),'Pre-send source refresh failed',null,60);continue;}
       at=clock();

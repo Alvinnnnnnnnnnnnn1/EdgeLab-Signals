@@ -1,5 +1,7 @@
 # Original V1 implementation handoff — 21 November 2026 (Melbourne)
 
+V1.4.1: [Melbourne daytime windows, quiet-hour delivery and optional bookmaker preparation](v141-daytime-research.md). The 60-second heartbeat is separate from acquisition; independent T−90/T−20 source tasks retain overnight fixture deadlines. Sportsbet remains primary; TAB/Ladbrokes adapters are offline preparation, with no new paid allowance or verified NBA prop coverage.
+
 V1.4 continuation: [resumable genuine benchmarks, independent research/SHADOW worker and verified Telegram canary](v14-live-research-foundation.md). Earlier coverage/readiness statements below are preserved historical snapshots.
 
 Latest continuation: [NBA-wide collection, reviewed quotas, genuine Sportsbet coverage and prospective research preparation](nba-collection-and-live-research.md).
