@@ -11,13 +11,15 @@ import { JsonHTTP } from './providers/http';
 import { BDLProvider } from './providers/balldontlie';
 import { OddsProvider } from './providers/odds';
 import { settle } from './core/settlement';
+import { Telegram,enqueueTelegramCanary,dispatchTelegramStatus } from './core/telegram';
+import { configureStatusMessages } from './research/operations';
 const [command='help',...args]=process.argv.slice(2);
 async function main(){
   if(command==='demo'){console.log(JSON.stringify(await runDemo(args[0]),null,2));return;}
   if(command==='help'){console.log(`EdgeLab Signals (Node 24)\n\n  demo [isolated-db]        Offline synthetic end-to-end pipeline\n  audit                    Local capabilities and readiness; no network\n  scan                     One independent research cycle\n  worker                   Headless 60-second tick; configured windows/quotas\n  import <bundle.json>     Import permitted normalized records + source bytes\n  ingest <ids> <from> <to>  One resumable BDL stats page; configured entitlement\n  discover <NBA|NBL>       Read-only event catalogue under configured allowance\n  markets <league> <id>    Read-only exact event market coverage (1-credit ceiling)\n  evaluate [as-of|retrospective]  Chronological reports; retrospective cannot activate\n  settle                   Grade existing issued recommendations from retained finals\n  verify-relay             Read-only ping + exact allowlisted DM verification; NO SEND\n\nPrivate config: EDGELAB_CONFIG or config/local.json (0600). Network/delivery disabled by default.`);return;}
   const config=loadConfig(),store=new Store(config.database);
   try{
-    if(command==='audit'){console.log(JSON.stringify({status:systemStatus(config,store,nowISO()),credentials:{balldontlie:!!process.env.BALLDONTLIE_API_KEY,odds:!!process.env.ODDS_API_KEY,bluebubbles:!!process.env.BLUEBUBBLES_PASSWORD},report:'docs/source-capabilities.md'},null,2));}
+    if(command==='audit'||command==='status'){console.log(JSON.stringify({status:systemStatus(config,store,nowISO()),credentials:{balldontlie:!!process.env.BALLDONTLIE_API_KEY,odds:!!process.env.ODDS_API_KEY,bluebubbles:!!process.env.BLUEBUBBLES_PASSWORD,telegram:!!process.env.TELEGRAM_BOT_TOKEN},report:'docs/source-capabilities.md'},null,2));}
     else if(command==='scan')console.log(JSON.stringify(await scanOnce(config,store),null,2));
     else if(command==='worker'){
       const controller=new AbortController();process.once('SIGINT',()=>controller.abort());process.once('SIGTERM',()=>controller.abort());
@@ -37,6 +39,16 @@ async function main(){
     }
     else if(command==='settle')console.log(JSON.stringify(settle(store,store.logs(),nowISO()),null,2));
     else if(command==='verify-relay')console.log(JSON.stringify(await new BlueBubbles(config,store).verify(),null,2));
+    else if(command==='verify-telegram')console.log(JSON.stringify(await new Telegram(config,store).verify(),null,2));
+    else if(command==='telegram-status'){
+      if(!['enable','disable'].includes(args[0])||args[1]!=='--confirm'||args.length!==2)throw new Error('Use telegram-status enable|disable --confirm');console.log(JSON.stringify(configureStatusMessages(args[0]==='enable',true),null,2));
+    }
+    else if(command==='telegram-test'){
+      if(args.length!==1||args[0]!=='--confirm')throw new Error('Explicit one-time transport canary: telegram-test --confirm');
+      const transport=new Telegram(config,store);if(!transport.verified())throw new Error('Verify the exact allowlisted Telegram destination first');
+      const id=enqueueTelegramCanary(store),result=await dispatchTelegramStatus(store,config,transport,{canaryId:id});
+      const state=store.db.prepare('SELECT state FROM telegram_outbox WHERE id=?').get(id);console.log(JSON.stringify({...result,outbox:state,qualifiedAlertsEnabled:false},null,2));
+    }
     else if(command==='ingest'){
       if(!args[0]||!args[1]||!args[2]||!/^\d+(,\d+)*$/.test(args[0])||![args[1],args[2]].every(d=>/^\d{4}-\d{2}-\d{2}$/.test(d)))throw new Error('Use numeric player IDs and ISO dates');
       console.log(JSON.stringify(await new BDLProvider(new JsonHTTP(store,config),store,config).stats(args[0].split(','),args[1],args[2],nowISO()),null,2));

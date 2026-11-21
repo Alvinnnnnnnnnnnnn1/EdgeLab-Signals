@@ -4,6 +4,9 @@ import { leagueSchema, stamp } from './domain';
 const provider = z.object({ enabled: z.boolean().default(false), tier: z.enum(['free', 'all-star', 'goat']).default('free'), dailyLimit: z.number().int().min(0).max(10000).default(0), monthlyCredits: z.number().int().min(0).default(0), reserve: z.number().int().min(0).default(0), minIntervalSeconds: z.number().int().min(1).default(60) }).strict();
 export const configSchema = z.object({
   database: z.string().default('.local/signals.sqlite'), networkEnabled: z.boolean().default(false), deliveryEnabled: z.boolean().default(false),
+  operatingMode:z.enum(['disabled','research','shadow','qualified']).default('disabled'),
+  research:z.object({maxRequestsPerCycle:z.number().int().min(1).max(2).default(1),maxCandidatesPerFixture:z.number().int().min(1).max(100).default(30),historicalBackfill:z.boolean().default(true),fixtureHours:z.number().min(1).max(24).default(6),rosterHours:z.number().min(1).max(48).default(24),injuryHours:z.number().min(1).max(12).default(4)}).prefault({}),
+  telegram:z.object({allowlist:z.array(z.string().regex(/^[1-9]\d*$/)).default([]),statusEnabled:z.boolean().default(false),qualifiedEnabled:z.boolean().default(false),digestHour:z.number().int().min(0).max(23).default(9)}).prefault({}),
   bookmaker: z.literal('sportsbet').default('sportsbet'), leagues: z.array(leagueSchema).default(['NBA', 'NBL']),
   providers: z.object({ balldontlie: provider.default(() => provider.parse({})), odds: provider.default(() => provider.parse({})) }).default(() => ({ balldontlie: provider.parse({}), odds: provider.parse({}) })),
   bluebubbles: z.object({ url: z.url().default('http://127.0.0.1:1234'), recipient: z.string().default(''), chatGuid: z.string().default(''), allowlist: z.array(z.string()).default([]), verifiedAt: stamp.nullable().default(null) }).default(() => ({ url: 'http://127.0.0.1:1234', recipient: '', chatGuid: '', allowlist: [], verifiedAt: null })),

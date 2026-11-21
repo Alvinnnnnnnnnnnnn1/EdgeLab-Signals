@@ -24,6 +24,12 @@ export class Store {
       CREATE TABLE IF NOT EXISTS screenings(id TEXT PRIMARY KEY, at TEXT NOT NULL, body TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS prospective_forecasts(id TEXT PRIMARY KEY, at TEXT NOT NULL, event_id TEXT NOT NULL, player_id TEXT NOT NULL, prop TEXT NOT NULL, artifact_hash TEXT NOT NULL, body TEXT NOT NULL,
         UNIQUE(event_id,player_id,prop,artifact_hash));
+      CREATE TABLE IF NOT EXISTS shadow_forecasts(id TEXT PRIMARY KEY, at TEXT NOT NULL, event_id TEXT NOT NULL, player_id TEXT NOT NULL, prop TEXT NOT NULL, artifact_hash TEXT NOT NULL, body TEXT NOT NULL, UNIQUE(event_id,player_id,prop,artifact_hash));
+      CREATE TABLE IF NOT EXISTS research_jobs(id TEXT PRIMARY KEY, kind TEXT NOT NULL, next_at TEXT NOT NULL, deadline TEXT, state TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0, body TEXT NOT NULL, error TEXT);
+      CREATE TABLE IF NOT EXISTS research_runs(id TEXT PRIMARY KEY, at TEXT NOT NULL, body TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS research_models(id TEXT PRIMARY KEY, at TEXT NOT NULL, prop TEXT NOT NULL, body TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS research_grades(id TEXT PRIMARY KEY, at TEXT NOT NULL, classification TEXT NOT NULL, body TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS telegram_outbox(id TEXT PRIMARY KEY, kind TEXT NOT NULL, state TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0, next_at TEXT NOT NULL, binding TEXT NOT NULL, body TEXT NOT NULL, message_id TEXT, error TEXT, created_at TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS signals(id TEXT PRIMARY KEY, exact_key TEXT NOT NULL, family_key TEXT NOT NULL, issued_at TEXT NOT NULL, body TEXT NOT NULL);
       CREATE INDEX IF NOT EXISTS signal_exact ON signals(exact_key, issued_at);
       CREATE INDEX IF NOT EXISTS signal_family ON signals(family_key, issued_at);
@@ -38,6 +44,15 @@ export class Store {
       CREATE TRIGGER IF NOT EXISTS immutable_screenings_delete BEFORE DELETE ON screenings BEGIN SELECT RAISE(ABORT,'Screenings cannot be removed'); END;
       CREATE TRIGGER IF NOT EXISTS immutable_prospective_update BEFORE UPDATE ON prospective_forecasts BEGIN SELECT RAISE(ABORT,'Prospective forecasts are immutable'); END;
       CREATE TRIGGER IF NOT EXISTS immutable_prospective_delete BEFORE DELETE ON prospective_forecasts BEGIN SELECT RAISE(ABORT,'Prospective forecasts cannot be removed'); END;
+      CREATE TRIGGER IF NOT EXISTS immutable_shadow_update BEFORE UPDATE ON shadow_forecasts BEGIN SELECT RAISE(ABORT,'Shadow forecasts are immutable'); END;
+      CREATE TRIGGER IF NOT EXISTS immutable_shadow_delete BEFORE DELETE ON shadow_forecasts BEGIN SELECT RAISE(ABORT,'Shadow forecasts cannot be removed'); END;
+      CREATE TRIGGER IF NOT EXISTS immutable_research_run_update BEFORE UPDATE ON research_runs BEGIN SELECT RAISE(ABORT,'Research journals are immutable'); END;
+      CREATE TRIGGER IF NOT EXISTS immutable_research_run_delete BEFORE DELETE ON research_runs BEGIN SELECT RAISE(ABORT,'Research journals cannot be removed'); END;
+      CREATE TRIGGER IF NOT EXISTS immutable_research_model_update BEFORE UPDATE ON research_models BEGIN SELECT RAISE(ABORT,'Research models are immutable'); END;
+      CREATE TRIGGER IF NOT EXISTS immutable_research_model_delete BEFORE DELETE ON research_models BEGIN SELECT RAISE(ABORT,'Research models cannot be removed'); END;
+      CREATE TRIGGER IF NOT EXISTS immutable_research_grade_update BEFORE UPDATE ON research_grades BEGIN SELECT RAISE(ABORT,'Research grading revisions are immutable'); END;
+      CREATE TRIGGER IF NOT EXISTS immutable_research_grade_delete BEFORE DELETE ON research_grades BEGIN SELECT RAISE(ABORT,'Research grading revisions cannot be removed'); END;
+      CREATE TRIGGER IF NOT EXISTS immutable_telegram_body BEFORE UPDATE OF body,kind,binding,created_at ON telegram_outbox BEGIN SELECT RAISE(ABORT,'Notification content is immutable'); END;
       CREATE TRIGGER IF NOT EXISTS immutable_signals_update BEFORE UPDATE ON signals BEGIN SELECT RAISE(ABORT,'Signals are immutable'); END;
       CREATE TRIGGER IF NOT EXISTS immutable_signals_delete BEFORE DELETE ON signals BEGIN SELECT RAISE(ABORT,'Signals cannot be removed'); END;
       CREATE TRIGGER IF NOT EXISTS immutable_outcomes_update BEFORE UPDATE ON outcomes BEGIN SELECT RAISE(ABORT,'Outcomes are immutable'); END;
@@ -177,6 +192,7 @@ export class Store {
     });
   }
   leaseValid(name: string, token: string, now: string) { const r = this.db.prepare('SELECT token,expires_at FROM leases WHERE name=?').get(name) as { token: string; expires_at: string } | undefined; return !!r && r.token === token && ms(r.expires_at) > ms(now); }
+  renew(name:string,token:string,now:string,ttlSeconds:number){return !!this.db.prepare('UPDATE leases SET expires_at=? WHERE name=? AND token=? AND expires_at>?').run(new Date(ms(now)+ttlSeconds*1000).toISOString(),name,token,now).changes;}
   release(name: string, token: string) { this.db.prepare('DELETE FROM leases WHERE name=? AND token=?').run(name, token); }
   outcomeHistory(): Outcome[] { return (this.db.prepare('SELECT body FROM outcomes UNION ALL SELECT body FROM outcome_revisions ORDER BY 1').all() as {body:string}[]).map(r=>JSON.parse(r.body) as Outcome).sort((a,b)=>ms(a.evidence.observedAt)-ms(b.evidence.observedAt)||ms(a.at)-ms(b.at)); }
   outcomes(): Outcome[] { const latest=new Map<string,Outcome>();for(const r of this.outcomeHistory())latest.set(r.signalId,r);return [...latest.values()]; }

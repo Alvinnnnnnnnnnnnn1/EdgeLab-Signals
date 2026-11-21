@@ -2,18 +2,19 @@ import { Store } from '../core/store';
 import { hash,ms,props,assertReceipt,contextSchema,eventSchema,type Context,type Event,type Receipt } from '../core/domain';
 import { artifactSchema,type ResearchArtifact } from './inference';
 import { features } from './features';
-import { predict } from './models';
+import { predict,RESEARCH_VERSION } from './models';
 import { calibrateCDF } from './calibration';
 import { unknownMetadata,validateRows } from './dataset';
 import { thresholds } from './experiment';
 import { scoreRows,pairedDifference,type ScoredPrediction } from './scoring';
 import { z } from 'zod';
+import { researchRows } from './metadata';
 
 export interface ProspectiveEvent {event:Event;source:Receipt;}
 /** Freeze conditional count forecasts independently of prices, issuance and
  * promotion. These records cannot substitute for the Sportsbet monitoring gate. */
-export function recordProspective(store:Store,artifacts:{prop:typeof props[number];artifact:ResearchArtifact;artifactHash:string}[],events:ProspectiveEvent[],contexts:Context[],at:string){
-  const rows=validateRows(store.logs().filter(l=>!l.source.simulated).map(log=>({log,metadata:log.research??unknownMetadata()})),at).filter(r=>r.log.event.league==='NBA'&&['regular','playoffs'].includes(r.metadata.phase));
+export function recordProspective(store:Store,artifacts:{prop:typeof props[number];artifact:ResearchArtifact;artifactHash:string}[],events:ProspectiveEvent[],contexts:Context[],at:string,clock=()=>at){
+  const rows=validateRows(researchRows(store),at).filter(r=>r.log.event.league==='NBA'&&['regular','playoffs'].includes(r.metadata.phase));
   let inserted=0,existing=0;const exclusions:{eventId:string|null;playerId:string|null;reason:string}[]=[];
   if(!events.length)exclusions.push({eventId:null,playerId:null,reason:'No exact source-backed upcoming NBA fixture'});
   if(!contexts.length)exclusions.push({eventId:null,playerId:null,reason:'No genuine positive availability/verified roster evidence'});
@@ -21,7 +22,7 @@ export function recordProspective(store:Store,artifacts:{prop:typeof props[numbe
   function retained(source:Receipt){assertReceipt(source,at);const key=hash(source);if(!verified.has(key)){if(!store.hasReceipt(source))throw new Error('Exact source receipt missing');verified.add(key);}}
   for(const model of artifacts){
     const artifact=artifactSchema.parse(model.artifact);
-    if(hash(artifact)!==model.artifactHash||ms(artifact.generatedAt)>ms(at))throw new Error('Prospective artifact hash/creation clock invalid');
+    if(hash(artifact)!==model.artifactHash||ms(artifact.generatedAt)>ms(at)||artifact.modelVersion!==RESEARCH_VERSION)throw new Error('Prospective artifact hash/creation clock/version invalid');
     for(const input of events){
       const event=eventSchema.parse(input.event);if(event.league!=='NBA'||ms(event.startsAt)<=ms(at)+120000)continue;
       for(const raw of contexts.filter(c=>c.eventId===event.id)){
@@ -40,11 +41,12 @@ export function recordProspective(store:Store,artifacts:{prop:typeof props[numbe
           if(!selected||!baseline)throw new Error('Frozen model unavailable for these inputs');
           const inputRefs=[...new Set(featureLogs.map(r=>hash([r.log.event.id,r.log.playerId,r.log.source.hash])))].sort();
           const inputs={event,fixtureSource:input.source,context,artifact,artifactHash:model.artifactHash,inputRefs,featureNames:f.names,features:f.values};
-          const record={kind:'pregame-conditional-count/1',at,event,playerId:context.playerId,teamId:context.teamId,prop:model.prop,artifactHash:model.artifactHash,
+          const frozenAt=clock();if(ms(frozenAt)<ms(at)||ms(frozenAt)>=ms(event.startsAt)-120000)throw new Error('Forecast calculation crossed its pregame deadline');
+          const record={kind:'pregame-conditional-count/1',at:frozenAt,event,playerId:context.playerId,teamId:context.teamId,prop:model.prop,artifactHash:model.artifactHash,
             inputs,inputHash:hash(inputs),distribution:calibrateCDF(selected.pmf,artifact.calibration),baselineDistribution:baseline.pmf,
             participationProbability:f.participation,conditionalOnParticipating:true,researchOnly:true,promotionEligible:false,originalSourceClocksPreserved:true};
           const id=hash([event.id,context.playerId,model.prop,model.artifactHash]);
-          const result=store.db.prepare('INSERT OR IGNORE INTO prospective_forecasts VALUES (?,?,?,?,?,?,?)').run(id,at,event.id,context.playerId,model.prop,model.artifactHash,JSON.stringify({...record,id}));
+          const result=store.db.prepare('INSERT OR IGNORE INTO prospective_forecasts VALUES (?,?,?,?,?,?,?)').run(id,frozenAt,event.id,context.playerId,model.prop,model.artifactHash,JSON.stringify({...record,id}));
           if(result.changes)inserted++;else existing++;
         }catch(e){exclusions.push({eventId:event.id,playerId:raw.playerId,reason:e instanceof Error?e.message:'Invalid prospective input'});}
       }
@@ -53,8 +55,8 @@ export function recordProspective(store:Store,artifacts:{prop:typeof props[numbe
   return{at,state:inserted||existing?'recorded':'blocked',inserted,existing,exclusions,networkRequests:0,outboundMessages:0};
 }
 
-export function scoreProspective(store:Store,at:string){
-  const records=store.db.prepare('SELECT body FROM prospective_forecasts ORDER BY at,id').all() as {body:string}[];
+export function scoreProspective(store:Store,at:string,classification:'verified-availability'|'conditional-shadow'='verified-availability'){
+  const records=store.db.prepare(classification==='conditional-shadow'?'SELECT body FROM shadow_forecasts ORDER BY at,id':'SELECT body FROM prospective_forecasts ORDER BY at,id').all() as {body:string}[];
   const logs=store.logs(),indexed=new Map(logs.map(log=>[hash([log.event.id,log.playerId,log.source.hash]),log]));
   const groups=new Map<string,{prop:typeof props[number];selected:ScoredPrediction[];baseline:ScoredPrediction[]}>();
   const exclusions:{id:string;reason:string}[]=[];
@@ -78,6 +80,6 @@ export function scoreProspective(store:Store,at:string){
       group.selected.push({...common,pmf:pmf.parse(r.distribution)});group.baseline.push({...common,pmf:pmf.parse(r.baselineDistribution)});groups.set(key,group);
     }catch(e){exclusions.push({id:r.id,reason:e instanceof Error?e.message:'Invalid frozen record'});}
   }
-  return{at,frozenRecords:records.length,groups:[...groups].map(([id,g])=>({id,prop:g.prop,metrics:scoreRows(g.selected,thresholds.NBA[g.prop]),baseline:scoreRows(g.baseline,thresholds.NBA[g.prop]),paired:pairedDifference(g.selected,g.baseline,thresholds.NBA[g.prop])})),exclusions,
+  return{at,classification,frozenRecords:records.length,gradedIds:[...groups.values()].flatMap(g=>g.selected.map(r=>r.id)),unresolved:records.length-[...groups.values()].reduce((n,g)=>n+g.selected.length,0),groups:[...groups].map(([id,g])=>({id,prop:g.prop,metrics:scoreRows(g.selected,thresholds.NBA[g.prop]),baseline:scoreRows(g.baseline,thresholds.NBA[g.prop]),paired:pairedDifference(g.selected,g.baseline,thresholds.NBA[g.prop])})),exclusions,
     scope:'Conditional count accuracy only; these records cannot replace quote/terms/participation monitoring or promote a live alert.',promotionEligible:false};
 }

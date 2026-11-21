@@ -1,5 +1,7 @@
 # NBA-wide collection and live research preparation
 
+Later V1.4: the first combined benchmark failed on threes before saving its completed props. [V1.4 corrects the model and report persistence, completes all four benchmarks, and prepares independent live research and Telegram](v14-live-research-foundation.md). The original dated workflow below is retained.
+
 This continues V1.2 on 21 November 2026 (Melbourne). The initial checkout was clean on `main`, matching `origin/main` at `63db48c`. Work is isolated on `codex/nba-wide-research`. A private SQLite online backup and hashes of all original log/source rows and relay verification were retained before changes.
 
 ## League collection and reviewed limits

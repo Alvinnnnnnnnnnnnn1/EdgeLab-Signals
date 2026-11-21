@@ -12,14 +12,37 @@ import { coverageReport } from './coverage';
 import { recordProspective,scoreProspective } from './prospective';
 import { loadEvidence } from '../providers/import';
 import { oddsCoveragePlan,testOddsCoverage } from './odds-coverage';
+import { researchRows,metadataDiff } from './metadata';
+import { benchmarkRun } from './benchmark-run';
+import { livePlan,liveStatus,liveOnce,liveWorker } from './live';
+import { registerResearchModels } from './shadow';
+import { configureMode,prepareLaunchAgent } from './operations';
+import { evaluateMinutes } from './minutes';
 const [command = 'audit', ...args] = process.argv.slice(2);
 function save(path: string, value: unknown) { mkdirSync('.local/research-runs', { recursive: true, mode: 0o700 }); writeFileSync(path, JSON.stringify(value, null, 2), { mode: 0o600, flag: 'wx' }); return path; }
 async function main() {
+  if(command==='help'){console.log(`EdgeLab NBA research\n  live-plan | live-status\n  live-once --dry-run | --execute\n  activate research|shadow --confirm | deactivate --confirm\n  prepare-launchagent | worker\n  collection-plan | coverage\n  collect-plan MAX_REQUESTS [--execute]\n  collect SEASON FROM TO MAX_REQUESTS [--execute]\n  snapshot SOURCE_REFERENCE\n  benchmark DATASET as-of|retrospective [--target-season YYYY] [--prop points|rebounds|assists|threes] [--resume]\n  models-register FROZEN_REPORTS | minutes FROZEN_REPORTS\n  prospective FROZEN_REPORTS | prospective-score\n  odds-plan | odds-coverage PRIVATE_GRANT --execute\nNetwork is quota-gated. Research, SHADOW, status delivery and qualified alerts are separate.`);return;}
   const config = loadConfig(), store = new Store(config.database), at = nowISO();
   try {
-    const rows = store.logs().filter(l => !l.source.simulated).map(log => ({ log, metadata: log.research ?? unknownMetadata() }));
-    if(command==='prospective-score'){
-      const result=scoreProspective(store,at);console.log(JSON.stringify({...result,path:save(`.local/research-runs/prospective-score-${at.replaceAll(':','-')}.json`,result)},null,2));
+    const rows = ['audit','snapshot'].includes(command)?researchRows(store):[];
+    if(command==='minutes'){
+      if(args.length!==1)throw new Error('Use minutes FROZEN_BENCHMARK_REPORTS');const reports=JSON.parse(readFileSync(args[0],'utf8')) as Experiment[],report=reports.find(r=>r.league==='NBA'&&r.prop==='points'&&r.state==='evaluated');if(!report)throw new Error('Evaluated NBA benchmark required');const artifact=artifactSchema.parse(report.artifact),dataset=loadDataset(`.local/datasets/${artifact.datasetId}.json`),result=evaluateMinutes(dataset,report);console.log(JSON.stringify({...result,path:save(`.local/research-runs/minutes-${at.replaceAll(':','-')}.json`,result)},null,2));
+    }else if(command==='activate'){
+      if(!['research','shadow'].includes(args[0])||args[1]!=='--confirm'||args.length!==2)throw new Error('Use activate research|shadow --confirm; qualified alerts cannot be activated here');console.log(JSON.stringify(configureMode(store,args[0] as 'research'|'shadow',true),null,2));
+    }else if(command==='deactivate'){
+      if(args.length!==1||args[0]!=='--confirm')throw new Error('Use deactivate --confirm');console.log(JSON.stringify(configureMode(store,'disabled',true),null,2));
+    }else if(command==='prepare-launchagent')console.log(JSON.stringify(prepareLaunchAgent(),null,2));
+    else if(command==='live-plan')console.log(JSON.stringify(livePlan(store,config,at),null,2));
+    else if(command==='live-status')console.log(JSON.stringify(liveStatus(store,config,at),null,2));
+    else if(command==='live-once'){
+      if(args.length!==1||!['--dry-run','--execute'].includes(args[0]))throw new Error('Use live-once --dry-run or live-once --execute');
+      console.log(JSON.stringify(await liveOnce(store,config,{dryRun:args[0]==='--dry-run',manual:true}),null,2));
+    }else if(command==='worker'){
+      const controller=new AbortController();process.once('SIGTERM',()=>controller.abort());process.once('SIGINT',()=>controller.abort());await liveWorker(store,loadConfig,controller.signal);
+    }else if(command==='models-register'){
+      if(args.length!==1)throw new Error('Use models-register FROZEN_REPORT_ARRAY');console.log(JSON.stringify(registerResearchModels(store,JSON.parse(readFileSync(args[0],'utf8')),at),null,2));
+    }else if(command==='prospective-score'){
+      const result={at,verifiedAvailability:scoreProspective(store,at),conditionalShadow:scoreProspective(store,at,'conditional-shadow')};console.log(JSON.stringify({...result,path:save(`.local/research-runs/prospective-score-${at.replaceAll(':','-')}.json`,result)},null,2));
     }else if(command==='odds-plan')console.log(JSON.stringify(oddsCoveragePlan(),null,2));
     else if(command==='odds-coverage'){
       if(args.length!==2||args[1]!=='--execute')throw new Error('Use odds-plan first; then odds-coverage PRIVATE_SHARED_GRANT --execute');
@@ -38,7 +61,7 @@ async function main() {
       // The original genuine training snapshot must still pass source integrity;
       // a self-labelled artifact is not sufficient provenance for forward research.
       for(const id of new Set(artifacts.map(a=>a.artifact.datasetId))){const d=loadDataset(`.local/datasets/${id}.json`);if(d.id!==id||ms(d.createdAt)>Math.min(...artifacts.filter(a=>a.artifact.datasetId===id).map(a=>ms(a.artifact.generatedAt))))throw new Error('Prospective training snapshot identity or clock mismatch');}
-      const result=recordProspective(store,artifacts,evidence.registry.events.map(e=>({event:e.event,source:e.source})),evidence.contexts,at);
+      const result=recordProspective(store,artifacts,evidence.registry.events.map(e=>({event:e.event,source:e.source})),evidence.contexts,at,nowISO);
       console.log(JSON.stringify({...result,path:save(`.local/research-runs/prospective-${at.replaceAll(':','-')}.json`,result)},null,2));
     }else if(command==='coverage'){
       const result=coverageReport(store,at),path=save(`.local/research-runs/coverage-${at.replaceAll(':','-')}.json`,result);
@@ -54,7 +77,7 @@ async function main() {
         if(args.length>2||args[1]!==undefined&&!execute)throw new Error('Use collect-plan MAX_REQUESTS [--execute]');
         // Prioritize the latest current-season window for prospective readiness.
         const current=planned.seasons.at(-1)!;
-        windows=[...current.windows.slice().reverse(),...planned.seasons.slice(0,-1).flatMap(s=>s.windows)].map(({season,from,to})=>({season,from,to}));
+        windows=[...current.windows.slice().reverse(),...planned.seasons.slice(0,-1).slice().reverse().flatMap(s=>s.windows)].map(({season,from,to})=>({season,from,to}));
         windows=windows.filter(w=>store.get<{complete:boolean}>(`ingest:league:${w.season}:${w.from}:${w.to}`)?.complete!==true||w.to===at.slice(0,10));
       }else{
         if(args.length<4||args.length>5||args[4]!==undefined&&args[4]!=='--execute')throw new Error('Use collect SEASON FROM TO MAX_REQUESTS [--execute]');
@@ -74,20 +97,14 @@ async function main() {
       const result = readBDLExport(args[0], store, at); console.log(JSON.stringify({ path: result.path, id: result.dataset.id, inserted: result.inserted, exclusions: result.exclusions, audit: result.audit }, null, 2));
     } else if (command === 'snapshot') {
       const licence = args.join(' '); if (licence.length < 8) throw new Error('Supply the permitted source/contract reference; do not invent a licence.');
-      const dataset = createDataset(store, rows, [licence], at); console.log(JSON.stringify({ path: saveDataset(dataset), id: dataset.id, audit: auditDataset(dataset.rows) }, null, 2));
+      const dataset = createDataset(store, rows, [licence], at); console.log(JSON.stringify({ path: saveDataset(dataset), id: dataset.id, audit: auditDataset(dataset.rows),derivedMetadata:metadataDiff(rows) }, null, 2));
     } else if (command === 'benchmark') {
       if (!args[0]) throw new Error('Provide a genuine content-addressed dataset file; synthetic input is rejected.');
       const mode = args[1] ?? 'as-of'; if (mode !== 'as-of' && mode !== 'retrospective') throw new Error('Choose as-of or retrospective');
-      if(args.length>4||args[2]!==undefined&&args[2]!=='--target-season'||args[2]!==undefined&&!/^\d{4}$/.test(args[3]??''))throw new Error('Optional benchmark cohort: --target-season YYYY');
-      const targetSeasons=args[2]?[args[3]]:undefined;
-      const dataset = loadDataset(args[0]), reports:Experiment[]=[];
-      for(const league of ['NBA','NBL'] as const)for(const prop of props){
-        console.error(JSON.stringify({phase:'benchmark_start',league,prop,at:nowISO()}));
-        const started=performance.now(),report=runExperiment(dataset,league,prop,at,mode,targetSeasons);reports.push(report);
-        console.error(JSON.stringify({phase:'benchmark_complete',league,prop,state:report.state,elapsedSeconds:(performance.now()-started)/1000}));
-      }
-      const path = save(`.local/research-runs/${dataset.id}-${at.replaceAll(':', '-')}.json`, reports);
-      console.log(JSON.stringify({ path, dataset: dataset.id, reports: reports.map(r => ({ league: r.league, prop: r.prop, state: r.state, selected: r.selected, promotion: r.promotion })) }, null, 2));
+      let targetSeasons:string[]|undefined,prop:typeof props[number]|undefined,resume=false;
+      for(let i=2;i<args.length;i++){if(args[i]==='--target-season'&&!targetSeasons&&/^\d{4}$/.test(args[i+1]??''))targetSeasons=[args[++i]];else if(args[i]==='--prop'&&!prop&&props.includes(args[i+1] as typeof props[number]))prop=args[++i] as typeof props[number];else if(args[i]==='--resume'&&!resume)resume=true;else throw new Error('Use --target-season YYYY, --prop points|rebounds|assists|threes, --resume');}
+      const result=benchmarkRun(store,loadDataset(args[0]),{mode,targetSeasons,prop,resume,progress:v=>console.error(JSON.stringify(v))});
+      console.log(JSON.stringify(result,null,2));if(result.state==='failed')process.exitCode=1;
     } else if (command === 'certify') {
       if (!args[0]) throw new Error('Provide a frozen genuine benchmark report array');
       const reports = JSON.parse(readFileSync(args[0], 'utf8')) as Experiment[];

@@ -1,5 +1,7 @@
 # Standalone architecture
 
+V1.4 adds an independent `research live` orchestrator, persisted due jobs, immutable journals/model registry, separate verified-availability and conditional-SHADOW forecast tables, versioned scoring, and a Telegram status outbox. This path never requests paid odds or calls the opportunity issuer. Operating mode, status-message opt-in and qualified-delivery switches are independent. See [the current foundation and activation guide](v14-live-research-foundation.md); the original quote-screening path below remains a separately gated legacy path.
+
 Node 24 runs two independent processes. SQLite is private, local, transactional and shared through WAL; the dashboard uses read-only database connections. No old project import, service dependency, SDK credential or financial schema is retained.
 
 ```mermaid

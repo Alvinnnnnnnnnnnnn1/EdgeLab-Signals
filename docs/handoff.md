@@ -1,5 +1,7 @@
 # Original V1 implementation handoff — 21 November 2026 (Melbourne)
 
+V1.4 continuation: [resumable genuine benchmarks, independent research/SHADOW worker and verified Telegram canary](v14-live-research-foundation.md). Earlier coverage/readiness statements below are preserved historical snapshots.
+
 Latest continuation: [NBA-wide collection, reviewed quotas, genuine Sportsbet coverage and prospective research preparation](nba-collection-and-live-research.md).
 
 Later V1.2 update: [authenticated BDL integration results](v12-bdl-integration.md) records working ALL-STAR player-stat access, 81 genuine NBA player-games and a completed retrospective benchmark. The original empty-data findings below are historical.

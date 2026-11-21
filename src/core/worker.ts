@@ -12,6 +12,7 @@ import { settle } from './settlement';
 import { BlueBubbles, dispatch, relayBinding } from './messaging';
 import type { Registry } from '../providers/identity';
 import type { LiveValidation } from '../providers/import';
+import { liveStatus } from '../research/live';
 export function scanWindow(startsAt:string,now:string,windows:number[],bufferSeconds=120):number|null {
   const until=(ms(startsAt)-ms(now))/60000;
   if(until<=bufferSeconds/60)return null;
@@ -144,6 +145,6 @@ export function systemStatus(config:Config,store:Store,at:string) {
     worker:heartbeat?{...heartbeat,stale:ms(at)-ms(heartbeat.at)>180000}:{state:'not_started',stale:true},
     lastScan:store.get('worker:lastScan'),lastSuccessfulScan:store.get('worker:lastSuccess'),nextScan:store.get('worker:nextScan'),gap:store.get('worker:gap'),
     providers:{balldontlie:{enabled:config.providers.balldontlie.enabled,tier:config.providers.balldontlie.tier,dailyLimit:config.providers.balldontlie.dailyLimit,health:store.get('provider:balldontlie')},odds:{enabled:config.providers.odds.enabled,monthlyCredits:config.providers.odds.monthlyCredits,reserve:config.providers.odds.reserve,dailyLimit:config.providers.odds.dailyLimit,health:store.get('provider:odds'),quota:store.get('quota:odds')}},
-    usage:store.usage(),completeness:completeness(store.logs()),relay:{enabled:config.deliveryEnabled,verified:recipientVerified,credentialConfigured:!!process.env.BLUEBUBBLES_PASSWORD,health:store.get('relay:health')},
+    usage:store.usage(),completeness:completeness(store.logs()),research:liveStatus(store,config,at),relay:{enabled:config.deliveryEnabled,verified:recipientVerified,credentialConfigured:!!process.env.BLUEBUBBLES_PASSWORD,health:store.get('relay:health')},
     constraints:['Host sleep stops local research and the macOS relay.','NBA/NBL current availability and permitted source access are mandatory.','The dashboard cannot run, activate, or send from the worker.']};
 }

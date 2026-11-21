@@ -1,5 +1,7 @@
 # Local operating guide
 
+Current research-only worker, Telegram canary, explicit operating modes and activation/stop commands: [V1.4 live research foundation](v14-live-research-foundation.md). New installations stay disabled; research/SHADOW and status delivery are separate from qualified opportunity alerts. Use the new research service rather than activating the legacy quote-screening worker below.
+
 ## Start without any live services
 
 Use Node 24. Dependencies are pinned in `package-lock.json`.

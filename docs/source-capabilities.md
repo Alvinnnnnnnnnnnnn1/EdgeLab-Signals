@@ -1,5 +1,7 @@
 # Source feasibility audit — 21 November 2026 (Melbourne)
 
+V1.4 current evidence and remaining live-source gates: [live research foundation](v14-live-research-foundation.md). BDL ALL-STAR active-team and injury interfaces are implemented; genuine upcoming schema probing is deferred by the exhausted day allowance. Projected lineups remain GOAT-only and are not queried. Telegram is verified for the private destination; one integrated canary was accepted, with device delivery unobservable. Paid Sportsbet polling remains disabled.
+
 Latest continuation: [NBA-wide acquisition and the finite genuine Sportsbet coverage test](nba-collection-and-live-research.md). The findings below remain historical observations.
 
 Later V1.2 evidence: [authenticated BDL integration results](v12-bdl-integration.md). NBA ALL-STAR player statistics now work and 81 genuine player-games are imported; the initial unconfigured/zero-request findings below are preserved as historical observations.
