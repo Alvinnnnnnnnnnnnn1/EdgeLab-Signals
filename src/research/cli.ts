@@ -7,7 +7,7 @@ import { readBDLExport } from './import';
 import { certificate, monitor } from './monitoring';
 import { runExperiment, type Experiment } from './experiment';
 import { artifactSchema } from './inference';
-import { collectionPlan,collectBatch,type CollectionWindow } from './collection';
+import { collectionPlan,collectBatch,pendingCollectionWindows,type CollectionWindow } from './collection';
 import { coverageReport } from './coverage';
 import { recordProspective,scoreProspective } from './prospective';
 import { loadEvidence } from '../providers/import';
@@ -78,7 +78,7 @@ async function main() {
         // Prioritize the latest current-season window for prospective readiness.
         const current=planned.seasons.at(-1)!;
         windows=[...current.windows.slice().reverse(),...planned.seasons.slice(0,-1).slice().reverse().flatMap(s=>s.windows)].map(({season,from,to})=>({season,from,to}));
-        windows=windows.filter(w=>store.get<{complete:boolean}>(`ingest:league:${w.season}:${w.from}:${w.to}`)?.complete!==true||w.to===at.slice(0,10));
+        windows=pendingCollectionWindows(store,windows,at);
       }else{
         if(args.length<4||args.length>5||args[4]!==undefined&&args[4]!=='--execute')throw new Error('Use collect SEASON FROM TO MAX_REQUESTS [--execute]');
         windows=[{season:Number(args[0]),from:args[1],to:args[2]}];cap=Number(args[3]);execute=args[4]==='--execute';

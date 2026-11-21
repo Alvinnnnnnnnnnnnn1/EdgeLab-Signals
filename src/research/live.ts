@@ -6,7 +6,7 @@ import { Store } from '../core/store';
 import { ms,nowISO,hash,type Receipt,type Event } from '../core/domain';
 import { JsonHTTP,ProviderError } from '../providers/http';
 import { BDLProvider,bdlEvent } from '../providers/balldontlie';
-import { bdlQuota,collectionPlan,windowKey } from './collection';
+import { bdlQuota,collectionPlan,pendingCollectionWindows } from './collection';
 import { researchModels,freezeConditionalShadow,type RosterCandidate } from './shadow';
 import { scoreProspective } from './prospective';
 import { recordProspective } from './prospective';
@@ -98,7 +98,7 @@ export async function liveOnce(store:Store,config:Config,options:{dryRun?:boolea
           const result=await bdl.maintenanceStats(season,scope.from,scope.to,now,epoch);finish(job,result.complete?add(now,6*3600):add(now,config.providers.balldontlie.minIntervalSeconds+1),'queued',result.complete?{}:{scope,epoch});
           if(result.exclusions.length)outcomes.push({job:job.id,state:'partial',reason:`${result.exclusions.length} source rows excluded; originals retained`});
         }else if(job.kind==='history'){
-          const plan=collectionPlan(store,config,now),pending=[...plan.seasons.filter(s=>s.season===2026),...plan.seasons.filter(s=>s.season===2025),...plan.seasons.filter(s=>s.season===2024)].flatMap(s=>s.windows).find(w=>!store.get<{complete:boolean}>(windowKey(w))?.complete);
+          const plan=collectionPlan(store,config,now),pending=pendingCollectionWindows(store,[...plan.seasons.filter(s=>s.season===2026),...plan.seasons.filter(s=>s.season===2025),...plan.seasons.filter(s=>s.season===2024)].flatMap(s=>s.windows),now)[0];
           if(pending){const result=await bdl.leagueStats(pending.season,pending.from,pending.to,now);finish(job,add(now,60),'queued',{},result.exclusions.length?'Source exclusions require review':null);if(result.exclusions.length)finish(job,add(now,86400),'deferred',{},'SOURCE_ROWS_QUARANTINED');}else finish(job,add(now,86400));
         }else if(job.kind==='pregame'){
           const request=JSON.parse(job.body) as {event:Event;source:Receipt},current=store.get<{event:Event;source:Receipt;status:string}>(`live:fixture:${request.event.id.split(':').at(-1)}`);

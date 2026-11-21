@@ -8,6 +8,14 @@ import { BDLProvider } from '../providers/balldontlie';
 
 export interface CollectionWindow { season:number; from:string; to:string; }
 export const windowKey=(w:CollectionWindow)=>`ingest:league:${w.season}:${w.from}:${w.to}`;
+export function pendingCollectionWindows(store:Store,windows:CollectionWindow[],at=nowISO()){
+  const complete=(store.db.prepare("SELECT key,value FROM meta WHERE key LIKE 'ingest:league:%' OR key LIKE 'ingest:maintenance:%'").all() as {key:string;value:string}[]).flatMap(row=>{
+    const match=row.key.match(/:(\d{4}):(\d{4}-\d{2}-\d{2}):(\d{4}-\d{2}-\d{2})$/),c=JSON.parse(row.value) as {complete?:boolean;excluded?:number};
+    return match&&c.complete===true&&!(c.excluded??0)&&match[3]<at.slice(0,10)?[{season:Number(match[1]),from:match[2],to:match[3]}]:[];
+  });
+  const shift=(day:string,n:number)=>new Date(Date.parse(`${day}T00:00:00Z`)+n*86400000).toISOString().slice(0,10);
+  return windows.flatMap(window=>{let remaining=[window];for(const covered of complete){if(covered.season!==window.season)continue;remaining=remaining.flatMap(r=>covered.to<r.from||covered.from>r.to?[r]:[...(covered.from>r.from?[{...r,to:shift(covered.from,-1)}]:[]),...(covered.to<r.to?[{...r,from:shift(covered.to,1)}]:[])]);}return remaining;});
+}
 export function monthWindows(season:number,end:string):CollectionWindow[]{
   z.number().int().min(1946).max(2100).parse(season);z.iso.date().parse(end);
   const windows:CollectionWindow[]=[];
@@ -33,7 +41,7 @@ export function collectionPlan(store:Store,config:Config,at=nowISO()){
     const requests=p.estimatedFixtures.map((games,i)=>Math.ceil(games/100)+Math.ceil(games*(i===0?24:36)/100)+(i===0?0:4*windows.length));
     return{season:p.season,label:`${p.season}–${String(p.season+1).slice(-2)}`,windows,estimatedFixtures:p.estimatedFixtures,estimatedRequests:requests};
   });
-  return{at,quota:bdlQuota(store,config,at),seasons,estimatedTotalRequests:[0,1].map(i=>seasons.reduce((n,s)=>n+s.estimatedRequests[i],0)),
+  return{at,quota:bdlQuota(store,config,at),seasons,pendingWindows:pendingCollectionWindows(store,seasons.flatMap(s=>s.windows),at),estimatedTotalRequests:[0,1].map(i=>seasons.reduce((n,s)=>n+s.estimatedRequests[i],0)),
     assumptions:['24–36 returned player rows per fixture; DNP/zero-minute rows can increase this.', 'Completed seasons: 1,230 regular games through a planning upper bound of 1,342 including postseason/play-in/cup; actual coverage must be discovered.', 'Current-season 150–350 fixtures is an unverified planning range for this dated plan.', 'Upper range includes monthly page rounding and empty tail-page overhead; cached/shared fixture coverage can reduce requests.'],
     proposedLimits:{dailyLimit:100,maximumRequestsPerBatch:25,minIntervalSeconds:config.providers.balldontlie.minIntervalSeconds,automaticServices:false},
     capChanged:false,notes:['No request or private configuration change is made by planning.', 'The owner must explicitly review an increase from the existing daily cap before it is changed.']};

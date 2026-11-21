@@ -141,7 +141,9 @@ Final tests and commit identifiers are recorded with the handoff. Private eviden
 
 ## Final verification
 
-`npm run verify` passed **122 tests**, with zero failures/skips, strict TypeScript and the production build. The absolute-path service wrapper also starts/stops with disabled configuration in an isolated workspace. Ten build trace manifests contain zero private runtime entries; the configured stats/odds keys, Telegram token/private destination and relay password have zero occurrences in build output. A completed benchmark resume verified every report and recalculated zero props. All 8,715 original normalized logs and their retained sources passed preservation checks; SQLite integrity is `ok`. No genuine recommendation or qualified outbox entry exists.
+`npm run verify` passed **123 tests**, with zero failures/skips, strict TypeScript and the production build. The absolute-path service wrapper also starts/stops with disabled configuration in an isolated workspace. Ten build trace manifests contain zero private runtime entries; the configured stats/odds keys, Telegram token/private destination and relay password have zero occurrences in build output. A completed benchmark resume verified every report and recalculated zero props. All 8,715 original normalized logs and their retained sources passed preservation checks; SQLite integrity is `ok`. No genuine recommendation or qualified outbox entry exists.
+
+The final UTC-rollover regression subtracts completed league-wide and maintenance date intervals before queuing a growing current-month window. Selected-player scopes do not stand in for NBA-wide coverage, and scopes with source exclusions do not certify coverage. Thus recent maintenance does not cause a completed month to be re-downloaded before the missing 2025–26 season.
 
 ## Exact changed files
 
@@ -165,6 +167,7 @@ src/core/worker.ts
 src/providers/balldontlie.ts
 src/research/benchmark-run.ts
 src/research/cli.ts
+src/research/collection.ts
 src/research/dataset.ts
 src/research/distributions.ts
 src/research/experiment.ts
@@ -178,6 +181,7 @@ src/research/monitoring.ts
 src/research/operations.ts
 src/research/prospective.ts
 src/research/shadow.ts
+tests/collection.test.ts
 tests/live-research.test.ts
 tests/service.test.ts
 tests/telegram.test.ts

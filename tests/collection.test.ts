@@ -5,7 +5,7 @@ import { configSchema } from '../src/core/config';
 import { hash } from '../src/core/domain';
 import { JsonHTTP } from '../src/providers/http';
 import { BDLProvider } from '../src/providers/balldontlie';
-import { collectionPlan,collectBatch,monthWindows } from '../src/research/collection';
+import { collectionPlan,collectBatch,monthWindows,pendingCollectionWindows } from '../src/research/collection';
 import { coverageReport } from '../src/research/coverage';
 
 const fixture={id:101,date:'2025-01-01',season:2024,status:'Final',postseason:false,period:4,datetime:'2025-01-02T01:00:00.000Z',home_team:{id:1,full_name:'TEST-ONLY Home'},visitor_team:{id:2,full_name:'TEST-ONLY Away'}};
@@ -91,5 +91,13 @@ test('calendar plan is bounded, nonoverlapping, source-season filtered and quota
     for(let i=1;i<windows.length;i++)assert.equal(Date.parse(windows[i].from)-Date.parse(windows[i-1].to),86400000);
     d.store.reserve('balldontlie',d.config.providers.balldontlie,0,d.clock());const plan=collectionPlan(d.store,d.config,d.clock());
     assert.equal(plan.quota.remaining,99);assert.equal(plan.capChanged,false);assert.ok(plan.estimatedTotalRequests[1]>plan.estimatedTotalRequests[0]);assert.equal(d.urls.length,0);
+  }finally{d.close();}
+});
+test('daily rollover subtracts league and maintenance coverage instead of re-downloading a growing month',()=>{
+  const d=setup(()=>{assert.fail('coverage planning must never fetch');});try{
+    d.store.set('ingest:league:2026:2026-11-01:2026-11-20',{complete:true,excluded:0});const planned=[{season:2026,from:'2026-11-01',to:'2026-11-21'}];
+    assert.deepEqual(pendingCollectionWindows(d.store,planned,'2026-11-22T00:00:00.000Z'),[{season:2026,from:'2026-11-21',to:'2026-11-21'}]);
+    d.store.set('ingest:maintenance:2026-11-22:0:2026:2026-11-19:2026-11-21',{complete:true,excluded:0});assert.deepEqual(pendingCollectionWindows(d.store,planned,'2026-11-22T00:00:00.000Z'),[]);
+    d.store.set('ingest:maintenance:2026-11-22:0:2026:2026-11-19:2026-11-21',{complete:true,excluded:1});assert.equal(pendingCollectionWindows(d.store,planned,'2026-11-22T00:00:00.000Z').length,1);
   }finally{d.close();}
 });
