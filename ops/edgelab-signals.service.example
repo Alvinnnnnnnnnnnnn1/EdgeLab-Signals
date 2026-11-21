@@ -1,0 +1,19 @@
+# Review paths and install deliberately. This template has NOT been installed.
+[Unit]
+Description=EdgeLab Signals independent research worker
+After=network-online.target
+Wants=network-online.target
+[Service]
+Type=simple
+User=edgelab-signals
+WorkingDirectory=/opt/edgelab-signals
+ExecStart=/usr/bin/node --env-file-if-exists=.env.local --import tsx src/cli.ts worker
+Restart=on-failure
+RestartSec=30
+UMask=0077
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/edgelab-signals/.local
+[Install]
+WantedBy=multi-user.target

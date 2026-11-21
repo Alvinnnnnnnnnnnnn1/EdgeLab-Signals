@@ -1,0 +1,12 @@
+{
+  "database": ".local/signals.sqlite", "networkEnabled": false, "deliveryEnabled": false,
+  "bookmaker": "sportsbet", "leagues": ["NBA", "NBL"],
+  "providers": {
+    "balldontlie": {"enabled": false, "tier": "free", "dailyLimit": 0, "monthlyCredits": 0, "reserve": 0, "minIntervalSeconds": 13},
+    "odds": {"enabled": false, "dailyLimit": 0, "monthlyCredits": 0, "reserve": 100, "minIntervalSeconds": 60}
+  },
+  "bluebubbles": {"url": "http://127.0.0.1:1234", "recipient": "", "chatGuid": "", "allowlist": [], "verifiedAt": null},
+  "screen": {"minGames": 30, "minEV": 0.06, "minRobustEV": 0.01, "maxProbabilityGap": 0.12, "maxQuoteAgeSeconds": 180, "maxEvidenceAgeSeconds": 1800, "minMinutes": 12, "maxMinutesSD": 6},
+  "scan": {"windowsMinutes": [360, 120, 30, 10], "minBeforeStartSeconds": 120, "maxQuotesPerCycle": 300},
+  "mappingFile": ".local/mappings.json", "evidenceFile": ".local/evidence.json", "validationFile": ".local/validation.json"
+}
