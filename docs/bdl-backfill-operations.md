@@ -1,5 +1,7 @@
 # Bounded BDL history backfill for EdgeLab Signals
 
+For NBA-wide acquisition, prefer the [league-wide collection commands](nba-collection-and-live-research.md), which use season/date/cursor filters without player lists and share historical fixture coverage. The original selected-player helper below remains supported with its existing bounds.
+
 This optional helper reuses the existing `BDLProvider.stats`, `JsonHTTP` request reservations, retained receipts, per-scope resumable checkpoints and SQLite evidence store. It does **not** connect to SportsModel/V6, send iMessages, place bets, change API allowances, obtain a subscription or assert that live data has been acquired.
 
 ## Before any execution

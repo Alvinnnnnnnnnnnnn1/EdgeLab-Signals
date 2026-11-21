@@ -1,5 +1,7 @@
 # Original V1 implementation handoff — 21 November 2026 (Melbourne)
 
+Latest continuation: [NBA-wide collection, reviewed quotas, genuine Sportsbet coverage and prospective research preparation](nba-collection-and-live-research.md).
+
 Later V1.2 update: [authenticated BDL integration results](v12-bdl-integration.md) records working ALL-STAR player-stat access, 81 genuine NBA player-games and a completed retrospective benchmark. The original empty-data findings below are historical.
 
 V1.1 supersedes the model-readiness protocol: see [v11-model-evaluation.md](v11-model-evaluation.md). The V1 verification counts below are preserved historical results, not the current suite count.

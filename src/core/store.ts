@@ -7,6 +7,7 @@ import type { Config } from './config';
 
 export interface Signal { id: string; issuedAt: string; simulated: boolean; supersedes: string | null; decision: Decision; units: 1; }
 export interface Outbox { id: string; signalId: string; state: string; attempts: number; guid: string | null; nextAt: string; lastError: string | null; }
+export interface RequestAllowance {id:string;binding:string;expiresAt:string;maxRequests:number;maxCredits:number;}
 export class Store {
   db: DatabaseSync;
   constructor(path: string, readOnly = false) {
@@ -21,6 +22,8 @@ export class Store {
       CREATE TABLE IF NOT EXISTS cache(key TEXT PRIMARY KEY, receipt TEXT NOT NULL, body TEXT NOT NULL, expires_at TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS logs(id TEXT PRIMARY KEY, event_id TEXT NOT NULL, player_id TEXT NOT NULL, observed_at TEXT NOT NULL, body TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS screenings(id TEXT PRIMARY KEY, at TEXT NOT NULL, body TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS prospective_forecasts(id TEXT PRIMARY KEY, at TEXT NOT NULL, event_id TEXT NOT NULL, player_id TEXT NOT NULL, prop TEXT NOT NULL, artifact_hash TEXT NOT NULL, body TEXT NOT NULL,
+        UNIQUE(event_id,player_id,prop,artifact_hash));
       CREATE TABLE IF NOT EXISTS signals(id TEXT PRIMARY KEY, exact_key TEXT NOT NULL, family_key TEXT NOT NULL, issued_at TEXT NOT NULL, body TEXT NOT NULL);
       CREATE INDEX IF NOT EXISTS signal_exact ON signals(exact_key, issued_at);
       CREATE INDEX IF NOT EXISTS signal_family ON signals(family_key, issued_at);
@@ -33,6 +36,8 @@ export class Store {
       CREATE TABLE IF NOT EXISTS leases(name TEXT PRIMARY KEY, token TEXT NOT NULL, expires_at TEXT NOT NULL);
       CREATE TRIGGER IF NOT EXISTS immutable_screenings_update BEFORE UPDATE ON screenings BEGIN SELECT RAISE(ABORT,'Screenings are immutable'); END;
       CREATE TRIGGER IF NOT EXISTS immutable_screenings_delete BEFORE DELETE ON screenings BEGIN SELECT RAISE(ABORT,'Screenings cannot be removed'); END;
+      CREATE TRIGGER IF NOT EXISTS immutable_prospective_update BEFORE UPDATE ON prospective_forecasts BEGIN SELECT RAISE(ABORT,'Prospective forecasts are immutable'); END;
+      CREATE TRIGGER IF NOT EXISTS immutable_prospective_delete BEFORE DELETE ON prospective_forecasts BEGIN SELECT RAISE(ABORT,'Prospective forecasts cannot be removed'); END;
       CREATE TRIGGER IF NOT EXISTS immutable_signals_update BEFORE UPDATE ON signals BEGIN SELECT RAISE(ABORT,'Signals are immutable'); END;
       CREATE TRIGGER IF NOT EXISTS immutable_signals_delete BEFORE DELETE ON signals BEGIN SELECT RAISE(ABORT,'Signals cannot be removed'); END;
       CREATE TRIGGER IF NOT EXISTS immutable_outcomes_update BEFORE UPDATE ON outcomes BEGIN SELECT RAISE(ABORT,'Outcomes are immutable'); END;
@@ -40,6 +45,7 @@ export class Store {
       CREATE TRIGGER IF NOT EXISTS immutable_outcome_revisions_update BEFORE UPDATE ON outcome_revisions BEGIN SELECT RAISE(ABORT,'Outcome revisions are immutable'); END;
       CREATE TRIGGER IF NOT EXISTS immutable_outcome_revisions_delete BEFORE DELETE ON outcome_revisions BEGIN SELECT RAISE(ABORT,'Outcome revisions cannot be removed'); END;
       CREATE TRIGGER IF NOT EXISTS immutable_logs_update BEFORE UPDATE ON logs BEGIN SELECT RAISE(ABORT,'Log revisions are immutable'); END;
+      CREATE TRIGGER IF NOT EXISTS immutable_logs_delete BEFORE DELETE ON logs BEGIN SELECT RAISE(ABORT,'Log revisions cannot be removed'); END;
       CREATE TRIGGER IF NOT EXISTS immutable_source_receipts_update BEFORE UPDATE ON source_receipts BEGIN SELECT RAISE(ABORT,'Source receipts are immutable'); END;
       CREATE TRIGGER IF NOT EXISTS immutable_source_receipts_delete BEFORE DELETE ON source_receipts BEGIN SELECT RAISE(ABORT,'Source receipts cannot be removed'); END;
       CREATE TRIGGER IF NOT EXISTS immutable_receipts_update BEFORE UPDATE ON receipts BEGIN SELECT RAISE(ABORT,'Receipts are immutable'); END;
@@ -134,7 +140,7 @@ export class Store {
       return !!result.changes;
     });
   }
-  reserve(provider: keyof Config['providers'], config: Config['providers'][keyof Config['providers']], credits: number, now: string) {
+  reserve(provider: keyof Config['providers'], config: Config['providers'][keyof Config['providers']], credits: number, now: string, allowance?:RequestAllowance) {
     return this.transaction(() => {
       if (!config.enabled || config.dailyLimit <= 0) throw new Error(`${provider}: disabled or zero allowance`);
       const day = now.slice(0, 10), month = now.slice(0, 7);
@@ -144,6 +150,15 @@ export class Store {
       if (totals.last && ms(now) - ms(totals.last) < config.minIntervalSeconds * 1000) throw new Error(`${provider}: cooldown`);
       const header = this.get<{ remaining: number; at: string }>(`quota:${provider}`);
       if (header && header.at.slice(0, 7) === month && header.remaining - credits < config.reserve) throw new Error(`${provider}: provider remaining credits below reserve`);
+      if(allowance){
+        if(ms(now)>=ms(allowance.expiresAt))throw new Error('Shared allowance expired');
+        const key=`request-allowance:${provider}:${allowance.id}`;
+        const previous=this.get<{binding:string;requests:number;credits:number}>(key);
+        if(previous&&previous.binding!==allowance.binding)throw new Error('Shared allowance binding changed');
+        const state=previous??{binding:allowance.binding,requests:0,credits:0};
+        if(state.requests+1>allowance.maxRequests||state.credits+credits>allowance.maxCredits)throw new Error('Shared allowance exhausted');
+        this.set(key,{...state,requests:state.requests+1,credits:state.credits+credits});
+      }
       const token = randomUUID();
       this.db.prepare('INSERT INTO quota VALUES (?,?,?,?,?)').run(token, provider, now, credits, 'reserved');
       // Debit the last observed account allowance locally until a new response updates it.

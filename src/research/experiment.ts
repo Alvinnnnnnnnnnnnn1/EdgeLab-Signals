@@ -41,19 +41,21 @@ export function fitEnsemble(specs: ModelSpec[], selection: Example[], lines: num
   }
   return best;
 }
-export function runExperiment(dataset: Dataset, league: League, prop: Prop, at: string, mode: KnowledgeMode = 'as-of') {
+export function runExperiment(dataset: Dataset, league: League, prop: Prop, at: string, mode: KnowledgeMode = 'as-of',targetSeasons?:string[]) {
+  if(targetSeasons&&(!targetSeasons.length||targetSeasons.some(s=>!/^\d{4}$/.test(s))))throw new Error('Target seasons must be explicit source season start years');
   if (ms(at) < ms(dataset.createdAt)) throw new Error('Dataset created after experiment clock');
   const all = validateRows(dataset.rows, at), source = all.filter(r => r.log.event.league === league && ['regular', 'playoffs'].includes(r.metadata.phase));
   const latest = new Map<string, ResearchRow>(); for (const r of source) latest.set(rowKey(r), r);
   const examples: Example[] = [], participation: { date: string; probability: number; y: number }[] = [];
   for (const row of latest.values()) {
+    if(targetSeasons&&!targetSeasons.includes(row.log.event.season))continue;
     const f = features(source, row.log, prop, mode); if (!f) continue;
     if (row.metadata.rosterOpportunityVerified && row.log.participated !== null && f.participation !== null) participation.push({ date: utcDay(row.log.event.startsAt), probability: f.participation, y: Number(row.log.participated) });
     if (row.log.participated === true && row.log.stats[prop] !== null && row.log.minutes !== null) examples.push({ row, features: f });
   }
   examples.sort((a, b) => ms(a.row.log.event.startsAt) - ms(b.row.log.event.startsAt) || rowKey(a.row).localeCompare(rowKey(b.row)));
   const split = chronologicalSplit(examples.map(e => utcDay(e.row.log.event.startsAt)));
-  const base = { protocol: PROTOCOL, modelVersion: RESEARCH_VERSION, datasetId: dataset.id, league, prop, generatedAt: at, mode, genuine: true, audit: auditDataset(all), thresholds: thresholds[league][prop] };
+  const base = { protocol: PROTOCOL, modelVersion: RESEARCH_VERSION, datasetId: dataset.id, league, prop, generatedAt: at, mode, genuine: true, audit: auditDataset(all), thresholds: thresholds[league][prop],cohort:{targetSeasons:targetSeasons??null,history:'All earlier source-qualified rows; target-season filtering never removes prior history.'} };
   if (!split || !examples.length) return { ...base, state: 'blocked' as const, reasons: ['Insufficient genuine, source-qualified chronological rows; no models trained or tested.'], split: null, models: [], selected: null, artifact: null, promotion: { eligible: false, reasons: ['No genuine benchmark'] } };
   const day = (e: Example) => utcDay(e.row.log.event.startsAt);
   const train = examples.filter(e => day(e) < split.trainEnd), selection = examples.filter(e => day(e) >= split.trainEnd && day(e) < split.selectionEnd);

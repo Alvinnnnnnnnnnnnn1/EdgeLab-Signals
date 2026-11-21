@@ -1,11 +1,11 @@
 import { hash, nowISO, type Receipt } from '../core/domain';
 import type { Config } from '../core/config';
-import { Store } from '../core/store';
+import { Store,type RequestAllowance } from '../core/store';
 export type Fetcher = (input: string | URL, init?: RequestInit) => Promise<Response>;
 export class ProviderError extends Error { constructor(public provider: string, public kind: string, public status: number | null = null) { super(`${provider}: ${kind}${status ? ` (${status})` : ''}`); } }
 const origins = { balldontlie: 'https://api.balldontlie.io', odds: 'https://api.the-odds-api.com' };
 export class JsonHTTP {
-  constructor(private store: Store, private config: Config, private fetcher: Fetcher = fetch, private clock = nowISO) {}
+  constructor(private store: Store, private config: Config, private fetcher: Fetcher = fetch, private clock = nowISO,private allowance?:(provider:keyof Config['providers'],path:string,credits:number,at:string)=>RequestAllowance|undefined) {}
   async get(provider: keyof Config['providers'], path: string, query: Record<string, string | string[]>, ttlSeconds: number, credits: number, fresh = false): Promise<{ body: unknown; receipt: Receipt; cached: boolean }> {
     if (!path.startsWith('/') || path.includes('..') || path.includes('?') || path.includes('#')) throw new Error('Invalid provider path');
     const at = this.clock(), endpoint = new URL(path, origins[provider]);
@@ -15,7 +15,7 @@ export class JsonHTTP {
     if (!this.config.networkEnabled) throw new ProviderError(provider, 'network_disabled');
     const secret = provider === 'odds' ? process.env.ODDS_API_KEY : process.env.BALLDONTLIE_API_KEY;
     if (!secret) throw new ProviderError(provider, 'credential_missing');
-    const reservation = this.store.reserve(provider, this.config.providers[provider], credits, at);
+    const reservation = this.store.reserve(provider, this.config.providers[provider], credits, at,this.allowance?.(provider,path,credits,at));
     const safeEndpoint = endpoint.toString();
     const headers: Record<string, string> = { Accept: 'application/json', 'User-Agent': 'EdgeLab-Signals/1.0 (private-research)' };
     if (provider === 'odds') endpoint.searchParams.set('apiKey', secret); else headers.Authorization = secret;

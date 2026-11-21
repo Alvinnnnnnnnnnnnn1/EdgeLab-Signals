@@ -28,6 +28,8 @@ The default database is `.local/signals.sqlite`. The data directory is created w
 
 Edit `networkEnabled`, provider `enabled`, `dailyLimit`, `monthlyCredits`, `reserve`, `minIntervalSeconds` and the actual subscribed BDL tier only after independent accounts and finite allowances exist. A configuration flag is not a subscription upgrade; a 401/403 stops that request. No trial activation or purchase path exists. Use a dedicated odds key: this local quota implementation cannot coordinate with another application using the same account on another database.
 
+The separately approved [shared-key coverage test](nba-collection-and-live-research.md) binds a finite private grant, inspects the old ledger/config read-only, refreshes account headers and protects the old worker's unused allocation. It does not enable ongoing shared-key collection or install a shared quota coordinator. Keep normal odds collection and delivery disabled.
+
 For a nominal 500-credit Odds API month, a reserve of 100 leaves a maximum 100 full four-market event calls, including pre-send refreshes. A 60-second worker heartbeat does **not** mean a paid query every minute. Default stages are 6h, 2h, 30m and 10m before the exact mapped event; fixture discovery caches for 15m. Significant new evidence can trigger a recheck after a 15m cooldown. Calls stop at the smaller of local allowance and known provider remaining credits. Attempts keep their reservations when a response is uncertain.
 
 ## Ingest and verify data
@@ -53,6 +55,8 @@ npm run signals -- ingest NATIVE_PLAYER_ID1,NATIVE_PLAYER_ID2 YYYY-MM-DD YYYY-MM
 Set `evidenceFile` to the continuously updated licensed export so the worker can refresh contexts and terms on each cycle. A separate `mappingFile` is optional; an embedded registry is used if it is absent. The example fixture is empty and makes no live-coverage claim. A source integration must validate that normalized facts match its provider's raw payload; the generic export loader checks schema, clocks, retained hashes and identities, and treats that integration as the trusted normalization boundary.
 
 BDL ingestion first captures paginated game metadata, then paginated player stats for the exact same date scope. It advances one successful page per invocation and retains checkpoints, so repeat the command on subsequent ticks until `complete: true`. The worker automatically does this for mapped NBA players over the recent three-day window. Complete current-day windows refresh after 15m; completed past-date scopes are retained. Historical catch-up must be requested with a bounded range and allowance. Dataset completeness is explicit; no current roster or positive availability is inferred from a box score or absence on the injury list. Verified final zero-minute rows still have unknown participation reason and are held rather than automatically voided.
+
+For NBA-wide acquisition without player IDs, use `research collection-plan`, then reviewed finite `collect-plan`/`collect` commands and the detailed `coverage` report in [the league-wide guide](nba-collection-and-live-research.md). Historical fixture coverage is shared across player scopes and league windows. `research prospective` and `prospective-score` provide non-issuing forward count research when genuine future fixtures and positive availability evidence exist.
 
 ## Evaluate before live recommendations
 

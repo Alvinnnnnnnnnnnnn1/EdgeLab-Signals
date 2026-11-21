@@ -42,6 +42,7 @@ export function createDataset(store: Store, rows: ResearchRow[], licenses: strin
   if (!licenses.length) throw new Error('Documented permitted source/licence reference required');
   const validated = validateRows(rows, at), receipts = new Map<string, { receipt: unknown; body: string }>();
   for (const r of validated) for (const source of [r.log.source, ...(r.log.supportingSources ?? [])]) {
+    if(receipts.has(hash(source)))continue;
     if (!store.hasReceipt(source)) throw new Error('Exact retained source receipt missing');
     const raw = store.db.prepare('SELECT body FROM receipts WHERE hash=?').get(source.hash) as { body: string };
     receipts.set(hash(source), { receipt: source, body: raw.body });
