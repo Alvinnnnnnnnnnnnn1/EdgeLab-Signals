@@ -37,6 +37,8 @@ function seedJobs(store:Store,config:Config,at:string){
 }
 export function liveStatus(store:Store,config:Config,at=nowISO()){
   const heartbeat=store.get<{at:string;state:string}>('live:worker'),last=store.get<Record<string,unknown>>('live:last-run');
+  const marketHeartbeat=store.get<{at:string;state:string}>('recurring:worker'),marketLast=store.get<{at:string;state:string;reason?:string;networkRequests:number}>('recurring:last-run');
+  const recurring={authorised:!!store.get('recurring:active-policy'),worker:marketHeartbeat,stale:!marketHeartbeat||ms(at)-ms(marketHeartbeat.at)>=180000,lastRun:marketLast};
   const count=(name:string)=>table(store,name)?Number((store.db.prepare(`SELECT count(*) AS n FROM ${name}`).get() as {n:number}).n):0;
   const verified=store.get<{at:string;binding:string}>('telegram:verification');
   const fixtures=store.get<{at:string}>('live:fixtures-complete'),roster=store.get<{at:string}>('live:roster-complete');
@@ -45,10 +47,10 @@ export function liveStatus(store:Store,config:Config,at=nowISO()){
   return{at,mode:config.operatingMode,researchActive:config.operatingMode!=='disabled'&&!!heartbeat&&['running','waiting'].includes(heartbeat.state)&&ms(at)-ms(heartbeat.at)<180000,scheduler:heartbeat?{...heartbeat,stale:ms(at)-ms(heartbeat.at)>=180000}:{state:'not_started',stale:true},
     lastRun:last,bdl:bdlQuota(store,config,at),fixtureDiscovery:fixtures,rosterDiscovery:roster,dataFreshness:{fixtures:freshness(fixtures,config.research.fixtureHours),roster:freshness(roster,config.research.rosterHours)},gap:store.get('live:gap'),models:count('research_models'),
     forecasts:{verifiedAvailability:count('prospective_forecasts'),conditionalShadow:count('shadow_forecasts')},modelPromoted:false,
-    experimentalSuggestions:{enabled:config.liveSuggestionsEnabled,forecasts:count('experimental_forecasts'),issued:count('experimental_suggestions'),lastRun:store.get('suggestions:last-run'),market:store.get('suggestions:last-market'),qualifiedGateUnchanged:true},
+    experimentalSuggestions:{enabled:config.liveSuggestionsEnabled,forecasts:count('experimental_forecasts'),issued:count('experimental_suggestions'),lastRun:store.get('suggestions:last-run'),market:store.get('suggestions:last-market'),qualifiedGateUnchanged:true,recurring},
     schedule:{...researchSchedule(at),notification:notificationWindow(at),deadlineTasks:table(store,'research_jobs')?store.db.prepare("SELECT kind,next_at,deadline,state,error FROM research_jobs WHERE deadline>? AND state IN ('queued','deferred') ORDER BY next_at LIMIT 8").all(at):[],pendingStatus:count('telegram_outbox')?Number((store.db.prepare("SELECT count(*) AS n FROM telegram_outbox WHERE kind='research-status' AND state IN ('pending','retryable_failed')").get() as {n:number}).n):0},
     marketBenchmarks:{primary:'sportsbet',optional:['tab','ladbrokes_au'],state:'prepared_unverified',recurringPaidRequests:false,review:store.get<ReturnType<typeof reviewMarketReceipt>>('markets:last-review')},
-    marketStatus:'MARKET_DATA_NOT_AUTHORISED',telegram:{verified:tgVerified,statusEnabled:config.telegram.statusEnabled,qualifiedEnabled:false},qualifiedOpportunityAlerts:'disabled',nextDue:table(store,'research_jobs')?store.db.prepare("SELECT min(next_at) AS at FROM research_jobs WHERE state IN ('queued','deferred','running')").get():null};
+    marketStatus:recurring.authorised?'SCOPED_RECURRING_SPORTSBET_POLICY':'MARKET_DATA_NOT_AUTHORISED',telegram:{verified:tgVerified,statusEnabled:config.telegram.statusEnabled,qualifiedEnabled:false},qualifiedOpportunityAlerts:'disabled',nextDue:table(store,'research_jobs')?store.db.prepare("SELECT min(next_at) AS at FROM research_jobs WHERE state IN ('queued','deferred','running')").get():null};
 }
 export function livePlan(store:Store,config:Config,at=nowISO()){
   const jobs=table(store,'research_jobs')?store.db.prepare("SELECT id,kind,next_at,deadline,state,error FROM research_jobs ORDER BY next_at,id").all():[];
@@ -191,7 +193,7 @@ export async function liveWorker(store:Store,readConfig:()=>Config,signal:AbortS
       const previous=store.get<{at:string}>('live:worker');if(previous&&ms(at)-ms(previous.at)>180000)store.set('live:gap',{from:previous.at,to:at,reason:'Sleep, stopped process or outage; continuity unverified'});
       if(!store.renew('live-worker',lease,at,150))throw new Error('Research worker lease expired');
       store.set('live:worker',{at,state:'running'});try{const result=await liveOnce(store,config,{signal});researchLog({at:nowISO(),state:result.state,runId:'id' in result?result.id:null,networkRequests:'networkRequests' in result?result.networkRequests:0});}catch{researchLog({at:nowISO(),state:'cycle_error'});}
-      if(config.liveSuggestionsEnabled&&!signal.aborted){if(!store.renew('live-worker',lease,nowISO(),150))throw new Error('Research worker lease expired');try{const result=await suggestionsCycle(store,config);researchLog({at:nowISO(),experimentalSuggestions:result.state,networkRequests:result.networkRequests});}catch{researchLog({at:nowISO(),experimentalSuggestions:'cycle_error'});}}
+      if(config.liveSuggestionsEnabled&&!store.get('recurring:active-policy')&&!signal.aborted){if(!store.renew('live-worker',lease,nowISO(),150))throw new Error('Research worker lease expired');try{const result=await suggestionsCycle(store,config);researchLog({at:nowISO(),experimentalSuggestions:result.state,networkRequests:result.networkRequests});}catch{researchLog({at:nowISO(),experimentalSuggestions:'cycle_error'});}}
       store.set('live:worker',{at:nowISO(),state:'waiting'});await new Promise<void>(resolve=>{const timer=setTimeout(done,60000);function done(){clearTimeout(timer);signal.removeEventListener('abort',done);resolve();}signal.addEventListener('abort',done,{once:true});if(signal.aborted)done();});
     }}finally{store.set('live:worker',{at:nowISO(),state:'stopped'});store.release('live-worker',lease);}
 }

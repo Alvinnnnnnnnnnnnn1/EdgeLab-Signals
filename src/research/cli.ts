@@ -16,7 +16,11 @@ import { researchRows,metadataDiff } from './metadata';
 import { benchmarkRun } from './benchmark-run';
 import { livePlan,liveStatus,liveOnce,liveWorker } from './live';
 import { registerResearchModels } from './shadow';
-import { configureMode,prepareLaunchAgent,configureSuggestions } from './operations';
+import { configureMode,prepareLaunchAgent,configureSuggestions,configureRecurring,prepareMarketLaunchAgent } from './operations';
+import {recurringCycle,reconcileHypothetical} from '../suggestions/recurring';
+import {recurringPlan,recurringHTTP,readRecurringPolicy} from '../suggestions/recurring-policy';
+import {recurringWorker} from '../suggestions/worker';
+import {readBetLog} from '../suggestions/bet-log';
 import {suggestionsCycle} from '../suggestions/cycle';
 import {suggestionsAcquisitionPlan} from '../suggestions/allowance';
 import {upcomingFixtures} from '../suggestions/forecasts';
@@ -26,11 +30,25 @@ import { researchBooks,MarketBenchmarkAdapter,reviewMarketReceipt } from './mark
 const [command = 'audit', ...args] = process.argv.slice(2);
 function save(path: string, value: unknown) { mkdirSync('.local/research-runs', { recursive: true, mode: 0o700 }); writeFileSync(path, JSON.stringify(value, null, 2), { mode: 0o600, flag: 'wx' }); return path; }
 async function main() {
-  if(command==='help'){console.log(`EdgeLab NBA research\n  live-plan | live-status\n  suggestions-plan | suggestions-status\n  suggestions-activate APPROVED_PRIVATE_GRANT --confirm\n  suggestions-enable --confirm | suggestions-disable --confirm\n  suggestions-once --execute\n  live-once --dry-run | --execute\n  activate research|shadow --confirm | deactivate --confirm\n  prepare-launchagent | worker\n  collection-plan | coverage\n  collect-plan MAX_REQUESTS [--execute]\n  collect SEASON FROM TO MAX_REQUESTS [--execute]\n  snapshot SOURCE_REFERENCE\n  benchmark DATASET as-of|retrospective [--target-season YYYY] [--prop points|rebounds|assists|threes] [--resume]\n  models-register FROZEN_REPORTS | minutes FROZEN_REPORTS\n  prospective FROZEN_REPORTS | prospective-score\n  market-plan EXACT_ODDS_EVENT_ID | market-review RETAINED_SOURCE_RECEIPT_ID\n  odds-plan | odds-coverage PRIVATE_GRANT --execute\nNetwork is quota-gated. Research, SHADOW, status delivery and qualified alerts are separate.`);return;}
+  if(command==='help'){console.log(`EdgeLab NBA research\n  live-plan | live-status\n  recurring-plan PRIVATE_POLICY | recurring-status\n  recurring-account PRIVATE_POLICY --execute\n  recurring-activate PRIVATE_POLICY --confirm\n  recurring-prepare-service PRIVATE_POLICY | recurring-worker PRIVATE_POLICY\n  recurring-once PRIVATE_POLICY --execute [--early EXACT_BDL_FIXTURE_ID]\n  recurring-grade\n  suggestions-plan | suggestions-status\n  suggestions-activate APPROVED_PRIVATE_GRANT --confirm\n  suggestions-enable --confirm | suggestions-disable --confirm\n  suggestions-once --execute\n  live-once --dry-run | --execute\n  activate research|shadow --confirm | deactivate --confirm\n  prepare-launchagent | worker\n  collection-plan | coverage\n  collect-plan MAX_REQUESTS [--execute]\n  collect SEASON FROM TO MAX_REQUESTS [--execute]\n  snapshot SOURCE_REFERENCE\n  benchmark DATASET as-of|retrospective [--target-season YYYY] [--prop points|rebounds|assists|threes] [--resume]\n  models-register FROZEN_REPORTS | minutes FROZEN_REPORTS\n  prospective FROZEN_REPORTS | prospective-score\n  market-plan EXACT_ODDS_EVENT_ID | market-review RETAINED_SOURCE_RECEIPT_ID\n  odds-plan | odds-coverage PRIVATE_GRANT --execute\nNetwork is quota-gated. Research, SHADOW, status delivery and qualified alerts are separate.`);return;}
   const config = loadConfig(), store = new Store(config.database), at = nowISO();
   try {
     const rows = ['audit','snapshot'].includes(command)?researchRows(store):[];
-    if(command==='suggestions-plan')console.log(JSON.stringify(suggestionsAcquisitionPlan(upcomingFixtures(store,at)[0]?.event??null),null,2));
+    if(command==='recurring-plan'){
+      if(args.length!==1)throw new Error('Use recurring-plan PRIVATE_POLICY');const policy=readRecurringPolicy(args[0],at);try{console.log(JSON.stringify(recurringPlan(store,policy,at),null,2));}catch(e){console.log(JSON.stringify({authorised:policy.ownerApproved,state:'blocked',reason:e instanceof Error?e.message:'ACCOUNT_EVIDENCE_REQUIRED'},null,2));}
+    }else if(command==='recurring-account'){
+      if(args.length!==2||args[1]!=='--execute')throw new Error('Use recurring-account PRIVATE_POLICY --execute; account-only zero-credit request');const page=await recurringHTTP(store,config,args[0],nowISO).get('/v4/sports',{},0,0,true);console.log(JSON.stringify({source:page.receipt,account:store.get('quota:odds')},null,2));
+    }else if(command==='recurring-activate'){
+      if(args.length!==2||args[1]!=='--confirm')throw new Error('Use recurring-activate PRIVATE_POLICY --confirm');console.log(JSON.stringify(configureRecurring(store,args[0],true),null,2));
+    }else if(command==='recurring-prepare-service'){
+      if(args.length!==1)throw new Error('Use recurring-prepare-service PRIVATE_POLICY');console.log(JSON.stringify(prepareMarketLaunchAgent(args[0]),null,2));
+    }else if(command==='recurring-worker'){
+      if(args.length!==1)throw new Error('Use recurring-worker PRIVATE_POLICY');const controller=new AbortController();process.once('SIGTERM',()=>controller.abort());process.once('SIGINT',()=>controller.abort());await recurringWorker(store,loadConfig,args[0],controller.signal);
+    }else if(command==='recurring-once'){
+      if(args[1]!=='--execute'||args.length!==2&&!(args.length===4&&args[2]==='--early'&&/^bdl:nba:game:[1-9]\d*$/.test(args[3])))throw new Error('Use recurring-once PRIVATE_POLICY --execute [--early EXACT_BDL_FIXTURE_ID]');console.log(JSON.stringify(await recurringCycle(store,config,args[0],{earlyFixtureId:args[3]}),null,2));
+    }else if(command==='recurring-grade')console.log(JSON.stringify({grading:reconcileHypothetical(store,at),log:readBetLog(store,at).summary},null,2));
+    else if(command==='recurring-status')console.log(JSON.stringify({worker:store.get('recurring:worker'),lastRun:store.get('recurring:last-run'),activePolicy:store.get('recurring:active-policy'),uncertainDebit:store.get('recurring:uncertain-debit'),log:readBetLog(store,at).summary},null,2));
+    else if(command==='suggestions-plan')console.log(JSON.stringify(suggestionsAcquisitionPlan(upcomingFixtures(store,at)[0]?.event??null),null,2));
     else if(command==='suggestions-status')console.log(JSON.stringify({enabled:config.liveSuggestionsEnabled,ledger:readLedger(store,config,at).summary,lastRun:store.get('suggestions:last-run')},null,2));
     else if(command==='suggestions-activate'){
       if(args.length!==2||args[1]!=='--confirm')throw new Error('Use suggestions-activate APPROVED_PRIVATE_GRANT --confirm');console.log(JSON.stringify(configureSuggestions(store,true,args[0],true),null,2));

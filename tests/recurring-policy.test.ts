@@ -1,0 +1,24 @@
+import test from 'node:test';import assert from 'node:assert/strict';
+import {recurringBudget,recurringHTTP,reviewedAccount,readRecurringPolicy} from '../src/suggestions/recurring-policy';
+import {policyFixture} from './support/recurring-fixture';
+test('recurring policy protects 160 credits, paces 308 over nine days and never resets the day budget on restart',()=>{const d=policyFixture();try{const budget=recurringBudget(d.store,d.policy,d.clock());assert.equal(budget.spendable,308);assert.equal(budget.dailyAllocated,35);assert.equal(budget.fullMarketSnapshotsRemaining,8);assert.equal(budget.protectedCredits,160);assert.deepEqual(recurringBudget(d.store,readRecurringPolicy(d.path,d.clock()),d.clock()),budget);}finally{d.close();}});
+test('verified actual charges permit efficient coverage while original maximum reservations remain immutable',async()=>{const d=policyFixture();let used=32,calls=0;try{
+ const client=recurringHTTP(d.store,d.config,d.path,d.clock,{oddsId:'EXACT-ID',fetcher:async()=>{calls++;used++;return Response.json({label:'TEST-ONLY price payload'},{headers:{'x-requests-used':String(used),'x-requests-remaining':String(500-used),'x-requests-last':'1'}});}});
+ await client.get('/v4/sports/basketball_nba/events/EXACT-ID/odds',{bookmakers:'sportsbet',markets:'player_points,player_rebounds,player_assists,player_threes'},120,4,true);
+ assert.equal(calls,1);assert.equal(recurringBudget(d.store,d.policy,d.clock()).dailySpent,1);assert.equal(recurringBudget(d.store,d.policy,d.clock()).dailyRemaining,34);assert.equal(d.store.db.prepare("SELECT credits FROM quota WHERE id!='TEST-ONLY-legacy'").get()!.credits,4);
+ assert.throws(()=>d.store.db.prepare('DELETE FROM odds_account_observations').run(),/cannot be removed/);
+}finally{d.close();}});
+test('unattributed consumers, stale headers, changed plan and uncertain transport stop paid acquisition',async()=>{const d=policyFixture();try{
+ d.store.set('quota:odds',{used:33,remaining:467,at:d.clock()});assert.throws(()=>reviewedAccount(d.store,d.policy,d.clock()),/UNATTRIBUTED/);
+ d.store.set('quota:odds',{used:32,remaining:468,at:'2026-11-22T05:00:00Z'});assert.throws(()=>recurringBudget(d.store,d.policy,d.clock()),/STALE/);
+ d.store.set('quota:odds',{used:32,remaining:968,at:d.clock()});assert.throws(()=>recurringBudget(d.store,d.policy,d.clock()),/PLAN_OR_HEADERS_CHANGED/);
+ d.store.set('quota:odds',{used:32,remaining:468,at:d.clock()});let calls=0;const client=recurringHTTP(d.store,d.config,d.path,d.clock,{oddsId:'EXACT-ID',fetcher:async()=>{calls++;throw new Error('TEST-ONLY timeout');}});
+ await assert.rejects(client.get('/v4/sports/basketball_nba/events/EXACT-ID/odds',{bookmakers:'sportsbet',markets:'player_points,player_rebounds,player_assists,player_threes'},120,4,true),/UNCERTAIN/);d.tick();await assert.rejects(client.get('/v4/sports/basketball_nba/events/EXACT-ID/odds',{bookmakers:'sportsbet',markets:'player_points,player_rebounds,player_assists,player_threes'},120,4,true),/UNCERTAIN/);assert.equal(calls,1);
+}finally{d.close();}});
+test('renewal requires observed new-month account reset and preserves the previous month ledger',async()=>{const d=policyFixture();try{recurringBudget(d.store,d.policy,d.clock());d.setAt('2026-12-01T00:03:00.000Z');let used=32;const client=recurringHTTP(d.store,d.config,d.path,d.clock,{fetcher:async()=>Response.json([],{headers:{'x-requests-used':String(used),'x-requests-remaining':String(500-used),'x-requests-last':'0'}})});
+ await assert.rejects(client.get('/v4/sports',{},0,0,true),/UNATTRIBUTED/);used=0;d.tick();await client.get('/v4/sports',{},0,0,true);assert.equal(recurringBudget(d.store,d.policy,d.clock()).dailyAllocated,11);assert.equal(recurringBudget(d.store,d.policy,d.clock()).spendable,340);assert.ok(d.store.get('recurring:day:'+d.policy.id+':2026-11-22'));
+}finally{d.close();}});
+test('paced daily credits reject the next maximum-cost snapshot before transport or another reservation',async()=>{const d=policyFixture();let used=32,calls=0;try{
+ const client=recurringHTTP(d.store,d.config,d.path,d.clock,{oddsId:'EXACT-ID',fetcher:async()=>{calls++;used+=4;return Response.json({label:'TEST-ONLY bounded snapshot'},{headers:{'x-requests-used':String(used),'x-requests-remaining':String(500-used),'x-requests-last':'4'}});}}),get=()=>client.get('/v4/sports/basketball_nba/events/EXACT-ID/odds',{bookmakers:'sportsbet',markets:'player_points,player_rebounds,player_assists,player_threes'},120,4,true);
+ for(let i=0;i<8;i++){await get();d.tick();}assert.equal(recurringBudget(d.store,d.policy,d.clock()).dailyRemaining,3);await assert.rejects(get(),/DAILY_CREDIT_BUDGET_EXHAUSTED/);assert.equal(calls,8);assert.equal(d.store.db.prepare("SELECT count(*) AS n FROM quota WHERE provider='odds'").get()!.n,9);assert.equal(reviewedAccount(d.store,d.policy,d.clock()).protectedCredits,160);
+}finally{d.close();}});

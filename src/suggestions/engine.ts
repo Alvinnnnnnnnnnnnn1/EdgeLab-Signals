@@ -1,6 +1,6 @@
 import {randomUUID} from 'node:crypto';
 import {Store,type Outcome} from '../core/store';
-import {hash,ms,quoteSchema,termsSchema,quoteFresh,ev,type Quote,type Terms,type Prop} from '../core/domain';
+import {hash,ms,quoteSchema,termsSchema,quoteFresh,ev,type Quote,type Terms,type Prop,type GameLog} from '../core/domain';
 import type {Config} from '../core/config';
 import {probabilities} from '../core/models';
 import {grade} from '../core/settlement';
@@ -83,8 +83,11 @@ export async function dispatchSuggestions(store:Store,config:Config,transport=ne
     }return{accepted,state:'completed',deviceDelivery:'unobservable'};
   }finally{store.release('experimental-delivery',lease);}
 }
-export function settleSuggestions(store:Store,at:string){let settled=0;const held:{id:string;reason:string}[]=[],logs=store.logs();
-  for(const s of suggestions(store)){const final=logs.filter(l=>l.event.id===s.quote.event.id&&l.playerId===s.quote.playerId).sort((a,b)=>ms(b.observedAt)-ms(a.observedAt))[0];if(!final)continue;
+// Load only fixtures being reconciled; repeatedly parsing the full historical
+// source archive must not delay live market deadlines.
+function eventLogReader(store:Store){const cache=new Map<string,GameLog[]>();return(id:string)=>{if(!cache.has(id))cache.set(id,(store.db.prepare('SELECT body FROM logs WHERE event_id=? ORDER BY observed_at').all(id) as {body:string}[]).map(r=>JSON.parse(r.body) as GameLog));return cache.get(id)!;};}
+export function settleSuggestions(store:Store,at:string){let settled=0;const held:{id:string;reason:string}[]=[],logs=eventLogReader(store);
+  for(const s of suggestions(store)){const final=logs(s.quote.event.id).filter(l=>l.playerId===s.quote.playerId).sort((a,b)=>ms(b.observedAt)-ms(a.observedAt))[0];if(!final)continue;
     try{for(const source of [final.source,...(final.supportingSources??[])])retained(store,source,at);const result=grade({id:s.id,issuedAt:s.at,simulated:false,decision:{quote:s.quote}},final,at);
       const previous=(store.db.prepare('SELECT body FROM experimental_grades WHERE signal_id=? ORDER BY at DESC,id DESC LIMIT 1').get(s.id) as {body:string}|undefined),old=previous?JSON.parse(previous.body) as Outcome:null;
       if(old&&old.result===result.result&&old.value===result.value)continue;if(old&&ms(result.evidence.observedAt)<=ms(old.evidence.observedAt))throw new Error('Older/ambiguous correction held');
@@ -92,16 +95,23 @@ export function settleSuggestions(store:Store,at:string){let settled=0;const hel
     }catch(e){held.push({id:s.id,reason:(e as Error).message});}
   }return{settled,held};
 }
-export function scoreExperimentalForecasts(store:Store,at:string){const logs=store.logs(),groups=new Map<Prop,{chosen:ScoredPrediction[];baseline:ScoredPrediction[];challenger:ScoredPrediction[]}>();
-  for(const f of experimentalForecasts(store)){if(f.inputHash!==hash(f.inputs)||ms(f.at)>=ms(f.event.startsAt)-120000)continue;const final=logs.filter(l=>!l.source.simulated&&hash(l.event)===hash(f.event)&&l.playerId===f.playerId&&l.teamId===f.teamId&&l.final&&l.participated===true&&l.stats[f.prop]!==null&&ms(l.observedAt)>ms(f.event.startsAt)&&ms(l.observedAt)<=ms(at)).sort((a,b)=>ms(b.observedAt)-ms(a.observedAt))[0];if(!final)continue;
-    for(const source of [final.source,...(final.supportingSources??[])])retained(store,source,at);const common={id:f.id,date:f.event.startsAt.slice(0,10),fixture:f.event.id,player:f.playerId,team:f.teamId,season:f.event.season,lowMinute:f.expectedMinutes<15,y:final.stats[f.prop]!},g=groups.get(f.prop)??{chosen:[],baseline:[],challenger:[]};g.chosen.push({...common,pmf:f.distribution});g.baseline.push({...common,pmf:f.baseline});g.challenger.push({...common,pmf:f.challenger});groups.set(f.prop,g);
+export function scoreExperimentalForecasts(store:Store,at:string){const logs=eventLogReader(store),groups=new Map<Prop,{chosen:ScoredPrediction[];baseline:ScoredPrediction[];challenger:ScoredPrediction[];minutes:{predicted:number;actual:number}[]}>();
+  for(const f of experimentalForecasts(store)){if(f.inputHash!==hash(f.inputs)||ms(f.at)>=ms(f.event.startsAt)-120000)continue;const final=logs(f.event.id).filter(l=>!l.source.simulated&&hash(l.event)===hash(f.event)&&l.playerId===f.playerId&&l.teamId===f.teamId&&l.final&&l.participated===true&&l.stats[f.prop]!==null&&ms(l.observedAt)>ms(f.event.startsAt)&&ms(l.observedAt)<=ms(at)).sort((a,b)=>ms(b.observedAt)-ms(a.observedAt))[0];if(!final)continue;
+    for(const source of [final.source,...(final.supportingSources??[])])retained(store,source,at);const common={id:f.id,date:f.event.startsAt.slice(0,10),fixture:f.event.id,player:f.playerId,team:f.teamId,season:f.event.season,lowMinute:f.expectedMinutes<15,y:final.stats[f.prop]!},g=groups.get(f.prop)??{chosen:[],baseline:[],challenger:[],minutes:[]};g.chosen.push({...common,pmf:f.distribution});g.baseline.push({...common,pmf:f.baseline});g.challenger.push({...common,pmf:f.challenger});if(final.minutes!==null)g.minutes.push({predicted:f.expectedMinutes,actual:final.minutes});groups.set(f.prop,g);
   }
   const binary:{p:number;y:number;fixture:string;player:string}[]=[];
   for(const row of store.db.prepare('SELECT body FROM experimental_candidates').all() as {body:string}[]){const c=JSON.parse(row.body);if(!c.probability||ms(c.at)>=ms(c.quote.event.startsAt))continue;
-    const final=logs.filter(l=>l.event.id===c.quote.event.id&&l.playerId===c.quote.playerId&&ms(l.observedAt)<=ms(at)).sort((a,b)=>ms(b.observedAt)-ms(a.observedAt))[0];if(!final)continue;
+    const final=logs(c.quote.event.id).filter(l=>l.playerId===c.quote.playerId&&ms(l.observedAt)<=ms(at)).sort((a,b)=>ms(b.observedAt)-ms(a.observedAt))[0];if(!final)continue;
     try{for(const source of [final.source,...(final.supportingSources??[])])retained(store,source,at);const o=grade({id:c.id,issuedAt:c.at,simulated:false,decision:{quote:c.quote}},final,at);if(o.result==='won'||o.result==='lost')binary.push({p:c.probability.win/(1-c.probability.push),y:Number(o.result==='won'),fixture:c.quote.event.id,player:c.quote.playerId});}catch{/* Unresolved participation and unknown results remain excluded. */}
   }
   const marketMetrics=binary.length?{decisiveQuoteSides:binary.length,fixtures:new Set(binary.map(r=>r.fixture)).size,players:new Set(binary.map(r=>r.player)).size,brier:binary.reduce((n,r)=>n+(r.p-r.y)**2,0)/binary.length,logLoss:binary.reduce((n,r)=>n-r.y*Math.log(Math.max(1e-9,r.p))-(1-r.y)*Math.log(Math.max(1e-9,1-r.p)),0)/binary.length,
     calibration:Array.from({length:10},(_,i)=>{const rows=binary.filter(r=>r.p>=i/10&&(i===9?r.p<=1:r.p<(i+1)/10));return{from:i/10,to:(i+1)/10,n:rows.length,predicted:rows.length?rows.reduce((n,r)=>n+r.p,0)/rows.length:null,observed:rows.length?rows.reduce((n,r)=>n+r.y,0)/rows.length:null};}),limitation:'Opposite sides, lines and props are correlated; quote sides are not independent player-games.'}:null;
-  const report={policy:SUGGESTION_POLICY,validated:false,marketMetrics,groups:[...groups].map(([prop,g])=>({prop,chosen:scoreRows(g.chosen,thresholds.NBA[prop]),baseline:scoreRows(g.baseline,thresholds.NBA[prop]),challenger:scoreRows(g.challenger,thresholds.NBA[prop]),paired:pairedDifference(g.chosen,g.baseline,thresholds.NBA[prop]),challengerVersusChosen:pairedDifference(g.challenger,g.chosen,thresholds.NBA[prop])}))};store.db.prepare('INSERT OR IGNORE INTO research_grades VALUES (?,?,?,?)').run(hash(report),at,'experimental-all-candidates',JSON.stringify({...report,at}));return report;
+  const evaluated=[...groups].map(([prop,g])=>{
+    const chosen=scoreRows(g.chosen,thresholds.NBA[prop]),baseline=scoreRows(g.baseline,thresholds.NBA[prop]),paired=pairedDifference(g.chosen,g.baseline,thresholds.NBA[prop]);
+    const state=!chosen||chosen.playerGames<30?'insufficient_forward_evidence':baseline&&chosen.dates>=5&&chosen.crps>baseline.crps*1.05&&paired.interval95.crps[0]>0?'degradation_observed':'provisional';
+    store.set(`experimental:model-health:${prop}`,{at,state,validated:false,modelAutomaticallyChanged:false});
+    return{prop,chosen,baseline,challenger:scoreRows(g.challenger,thresholds.NBA[prop]),paired,challengerVersusChosen:pairedDifference(g.challenger,g.chosen,thresholds.NBA[prop]),
+      minutes:g.minutes.length?{playerGames:g.minutes.length,mae:g.minutes.reduce((n,r)=>n+Math.abs(r.predicted-r.actual),0)/g.minutes.length,bias:g.minutes.reduce((n,r)=>n+r.predicted-r.actual,0)/g.minutes.length}:null,health:state};
+  });
+  const report={evaluationVersion:'backend-evaluation/1.4.3',policy:SUGGESTION_POLICY,validated:false,marketMetrics,groups:evaluated};store.db.prepare('INSERT OR IGNORE INTO research_grades VALUES (?,?,?,?)').run(hash(report),at,'experimental-all-candidates',JSON.stringify({...report,at}));return report;
 }

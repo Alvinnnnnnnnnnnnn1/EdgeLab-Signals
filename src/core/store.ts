@@ -7,7 +7,7 @@ import type { Config } from './config';
 
 export interface Signal { id: string; issuedAt: string; simulated: boolean; supersedes: string | null; decision: Decision; units: 1; }
 export interface Outbox { id: string; signalId: string; state: string; attempts: number; guid: string | null; nextAt: string; lastError: string | null; }
-export interface RequestAllowance {id:string;binding:string;expiresAt:string;maxRequests:number;maxCredits:number;}
+export interface RequestAllowance {id:string;binding:string;expiresAt:string;maxRequests:number;maxCredits:number;dailyCreditLimit?:number;}
 export class Store {
   db: DatabaseSync;
   constructor(path: string, readOnly = false) {
@@ -21,6 +21,7 @@ export class Store {
       CREATE TABLE IF NOT EXISTS source_receipts(id TEXT PRIMARY KEY, hash TEXT NOT NULL REFERENCES receipts(hash), body TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS cache(key TEXT PRIMARY KEY, receipt TEXT NOT NULL, body TEXT NOT NULL, expires_at TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS logs(id TEXT PRIMARY KEY, event_id TEXT NOT NULL, player_id TEXT NOT NULL, observed_at TEXT NOT NULL, body TEXT NOT NULL);
+      CREATE INDEX IF NOT EXISTS logs_event_player ON logs(event_id,player_id,observed_at);
       CREATE TABLE IF NOT EXISTS screenings(id TEXT PRIMARY KEY, at TEXT NOT NULL, body TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS prospective_forecasts(id TEXT PRIMARY KEY, at TEXT NOT NULL, event_id TEXT NOT NULL, player_id TEXT NOT NULL, prop TEXT NOT NULL, artifact_hash TEXT NOT NULL, body TEXT NOT NULL,
         UNIQUE(event_id,player_id,prop,artifact_hash));
@@ -44,6 +45,8 @@ export class Store {
       CREATE TABLE IF NOT EXISTS outcomes(id TEXT PRIMARY KEY, signal_id TEXT NOT NULL UNIQUE REFERENCES signals(id), at TEXT NOT NULL, body TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS outcome_revisions(id TEXT PRIMARY KEY, signal_id TEXT NOT NULL REFERENCES signals(id), at TEXT NOT NULL, body TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS quota(id TEXT PRIMARY KEY, provider TEXT NOT NULL, at TEXT NOT NULL, credits INTEGER NOT NULL, outcome TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS odds_account_observations(id TEXT PRIMARY KEY, quota_id TEXT NOT NULL UNIQUE REFERENCES quota(id), at TEXT NOT NULL, body TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS recurring_market_jobs(id TEXT PRIMARY KEY, event_id TEXT NOT NULL, stage TEXT NOT NULL, due_at TEXT NOT NULL, deadline TEXT NOT NULL, state TEXT NOT NULL, body TEXT NOT NULL, error TEXT);
       CREATE INDEX IF NOT EXISTS quota_time ON quota(provider, at);
       CREATE TABLE IF NOT EXISTS leases(name TEXT PRIMARY KEY, token TEXT NOT NULL, expires_at TEXT NOT NULL);
       CREATE TRIGGER IF NOT EXISTS immutable_screenings_update BEFORE UPDATE ON screenings BEGIN SELECT RAISE(ABORT,'Screenings are immutable'); END;
@@ -71,7 +74,7 @@ export class Store {
       CREATE TRIGGER IF NOT EXISTS immutable_source_receipts_delete BEFORE DELETE ON source_receipts BEGIN SELECT RAISE(ABORT,'Source receipts cannot be removed'); END;
       CREATE TRIGGER IF NOT EXISTS immutable_receipts_update BEFORE UPDATE ON receipts BEGIN SELECT RAISE(ABORT,'Receipts are immutable'); END;
     `);
-    for(const table of ['experimental_forecasts','experimental_candidates','experimental_suggestions','experimental_grades','experimental_annotations']){
+    for(const table of ['experimental_forecasts','experimental_candidates','experimental_suggestions','experimental_grades','experimental_annotations','odds_account_observations']){
       this.db.exec(`CREATE TRIGGER IF NOT EXISTS immutable_${table}_update BEFORE UPDATE ON ${table} BEGIN SELECT RAISE(ABORT,'Experimental records are immutable'); END;
         CREATE TRIGGER IF NOT EXISTS immutable_${table}_delete BEFORE DELETE ON ${table} BEGIN SELECT RAISE(ABORT,'Experimental records cannot be removed'); END;`);
     }
@@ -174,6 +177,7 @@ export class Store {
       const totals = this.db.prepare('SELECT COUNT(*) calls,COALESCE(SUM(credits),0) credits,MAX(at) last FROM quota WHERE provider=? AND at LIKE ?').get(provider, `${day}%`) as { calls: number; credits: number; last: string | null };
       const monthly = this.db.prepare('SELECT COALESCE(SUM(credits),0) credits FROM quota WHERE provider=? AND at LIKE ?').get(provider, `${month}%`) as { credits: number };
       if (totals.calls >= config.dailyLimit || monthly.credits + credits > config.monthlyCredits - config.reserve) throw new Error(`${provider}: quota ceiling or reserve`);
+      if(allowance?.dailyCreditLimit!==undefined&&totals.credits+credits>allowance.dailyCreditLimit)throw new Error('Recurring daily credit allowance exhausted');
       if (totals.last && ms(now) - ms(totals.last) < config.minIntervalSeconds * 1000) throw new Error(`${provider}: cooldown`);
       const header = this.get<{ remaining: number; at: string }>(`quota:${provider}`);
       if (header && header.at.slice(0, 7) === month && header.remaining - credits < config.reserve) throw new Error(`${provider}: provider remaining credits below reserve`);
