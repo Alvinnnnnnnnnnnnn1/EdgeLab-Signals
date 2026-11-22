@@ -1,0 +1,12 @@
+import{z}from'zod';import{hash,ms,assertReceipt,type Event}from'../core/domain';import type{RetainedInput}from'./betfair';import type{AvailabilityEvidence}from'./types';
+
+/** Offline GOAT contract parser only. It has no acquisition/activation path. */
+export function reviewProjectedLineups(input:RetainedInput,fixtures:Event[],at:string){
+ assertReceipt(input.source,at,false);if(hash(input.body)!==input.source.hash)throw new Error('LINEUP_SOURCE_INTEGRITY');const url=new URL(input.source.endpoint);if(input.source.provider!=='balldontlie'||url.hostname!=='api.balldontlie.io'||!['/nba/v1/projected_lineups','/v1/projected_lineups'].includes(url.pathname))throw new Error('PROJECTED_LINEUP_SOURCE_REQUIRED');
+ const page=z.object({data:z.array(z.object({id:z.number().int(),game_id:z.number().int(),team_id:z.number().int(),status:z.enum(['expected','confirmed']),updated_at:z.iso.datetime({offset:true}),lineup:z.array(z.object({position:z.string(),player:z.object({id:z.number().int().positive(),first_name:z.string(),last_name:z.string()})})).length(5)}))}).parse(JSON.parse(input.body));
+ const observations:AvailabilityEvidence[]=[],excluded:string[]=[];for(const row of page.data){const matches=fixtures.filter(f=>f.id===`bdl:nba:game:${row.game_id}`&&[f.homeId,f.awayId].includes(`bdl:nba:team:${row.team_id}`));if(matches.length!==1||ms(row.updated_at)>ms(input.source.retrievedAt)||new Set(row.lineup.map(p=>p.player.id)).size!==5){excluded.push(`lineup:${row.id}:exact_identity_or_update_clock_missing`);continue;}const event=matches[0];
+  if(ms(input.source.retrievedAt)>=ms(event.startsAt)||ms(row.updated_at)>=ms(event.startsAt)){excluded.push(`lineup:${row.id}:post_tip_retrieval_is_not_historical_pregame_evidence`);continue;}
+  for(const player of row.lineup)observations.push({fixtureId:event.id,playerId:`bdl:nba:player:${player.player.id}`,teamId:`bdl:nba:team:${row.team_id}`,status:row.status==='confirmed'?'confirmed-starter':'projected-starter',minutesLimit:null,observedAt:input.source.retrievedAt,sourceUpdatedAt:row.updated_at,validUntil:event.startsAt,source:input.source});
+ }
+ return{enabled:false,observations,excluded,minutesProjectionAvailable:false,participationProbability:null,limitations:['A projected starter is not a confirmed participant','Confirmation does not provide a minutes guarantee','Missing teams/players do not establish bench status or DNP','updated_at is a source update clock, not a recovered original publication time']};
+}

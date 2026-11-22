@@ -17,7 +17,8 @@
     "demo": "node --env-file-if-exists=.env.local --import tsx src/cli.ts demo",
     "worker": "node --env-file-if-exists=.env.local --import tsx src/cli.ts worker",
     "audit": "node --env-file-if-exists=.env.local --import tsx src/cli.ts audit",
-    "research": "node --env-file-if-exists=.env.local --import tsx src/research/cli.ts"
+    "research": "node --env-file-if-exists=.env.local --import tsx src/research/cli.ts",
+    "intelligence": "node --max-old-space-size=1024 --import tsx src/research-intelligence/cli.ts"
   },
   "dependencies": {
     "next": "^16.0.0",
