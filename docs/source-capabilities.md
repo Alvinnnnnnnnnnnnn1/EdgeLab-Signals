@@ -1,5 +1,7 @@
 # Source feasibility audit — 21 November 2026 (Melbourne)
 
+V1.4.2: [experimental NBA suggestions, real Sportsbet/Telegram run and Signals Ledger](v142-experimental-suggestions.md). The independent experimental feature is enabled; two genuine suggestions were issued from 86 quote-side candidates and accepted in one Telegram message. Five requests/eight credits consumed the reviewed finite allowance. Genuine settlement remains pending; the full live lifecycle is not yet verified. Qualified model gates remain unchanged.
+
 V1.4.1: [Melbourne daytime windows, quiet-hour delivery and optional bookmaker preparation](v141-daytime-research.md). The 60-second heartbeat is separate from acquisition; independent T−90/T−20 source tasks retain overnight fixture deadlines. Sportsbet remains primary; TAB/Ladbrokes adapters are offline preparation, with no new paid allowance or verified NBA prop coverage.
 
 V1.4 current evidence and remaining live-source gates: [live research foundation](v14-live-research-foundation.md). BDL ALL-STAR active-team and injury interfaces are implemented; genuine upcoming schema probing is deferred by the exhausted day allowance. Projected lineups remain GOAT-only and are not queried. Telegram is verified for the private destination; one integrated canary was accepted, with device delivery unobservable. Paid Sportsbet polling remains disabled.

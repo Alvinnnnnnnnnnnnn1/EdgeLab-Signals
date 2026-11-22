@@ -7,9 +7,9 @@ const oddsSchema = z.object({ id, sport_key: id, commence_time: stamp, home_team
 export const marketKeys: Record<Prop, string> = { points: 'player_points', rebounds: 'player_rebounds', assists: 'player_assists', threes: 'player_threes' };
 const byKey = Object.fromEntries(Object.entries(marketKeys).map(([a,b]) => [b,a])) as Record<string, Prop | undefined>;
 export interface NormalizedOdds { quotes: Quote[]; exclusions: { identity: string; reason: string }[]; marketHash: string; }
-export function normalizeOdds(raw: unknown, receipt: Receipt, registry: Registry, terms: Terms[], bookmaker = 'sportsbet'): NormalizedOdds {
+export function normalizeOdds(raw: unknown, receipt: Receipt, registry: Registry, terms: Terms[], bookmaker = 'sportsbet',allowClockBridge=false): NormalizedOdds {
   const input = oddsSchema.parse(raw), quotes: Quote[] = [], exclusions: NormalizedOdds['exclusions'] = [];
-  const event = exactEvent(registry, input);
+  const event = exactEvent(registry, input,allowClockBridge);
   const books = input.bookmakers.filter(b => b.key === bookmaker);
   if (books.length > 1) throw new Error('Duplicate bookmaker identity');
   if (!books.length) exclusions.push({ identity: input.id, reason: 'Requested bookmaker absent; no substitution' });

@@ -1,5 +1,6 @@
 {
   "database": ".local/signals.sqlite", "networkEnabled": false, "deliveryEnabled": false,
+  "liveSuggestionsEnabled": false, "suggestionsGrantFile": null,
   "bookmaker": "sportsbet", "leagues": ["NBA", "NBL"],
   "providers": {
     "balldontlie": {"enabled": false, "tier": "free", "dailyLimit": 0, "monthlyCredits": 0, "reserve": 0, "minIntervalSeconds": 13},

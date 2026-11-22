@@ -29,6 +29,12 @@ export class Store {
       CREATE TABLE IF NOT EXISTS research_runs(id TEXT PRIMARY KEY, at TEXT NOT NULL, body TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS research_models(id TEXT PRIMARY KEY, at TEXT NOT NULL, prop TEXT NOT NULL, body TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS research_grades(id TEXT PRIMARY KEY, at TEXT NOT NULL, classification TEXT NOT NULL, body TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS experimental_forecasts(id TEXT PRIMARY KEY, at TEXT NOT NULL, event_id TEXT NOT NULL, player_id TEXT NOT NULL, prop TEXT NOT NULL, body TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS experimental_candidates(id TEXT PRIMARY KEY, at TEXT NOT NULL, body TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS experimental_suggestions(id TEXT PRIMARY KEY, at TEXT NOT NULL, family TEXT NOT NULL, body TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS experimental_grades(id TEXT PRIMARY KEY, signal_id TEXT NOT NULL REFERENCES experimental_suggestions(id), at TEXT NOT NULL, body TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS experimental_annotations(id INTEGER PRIMARY KEY, signal_id TEXT NOT NULL REFERENCES experimental_suggestions(id), at TEXT NOT NULL, body TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS experimental_outbox(id TEXT PRIMARY KEY, at TEXT NOT NULL, body TEXT NOT NULL, binding TEXT NOT NULL, state TEXT NOT NULL, next_at TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0, message_id TEXT, error TEXT);
       CREATE TABLE IF NOT EXISTS telegram_outbox(id TEXT PRIMARY KEY, kind TEXT NOT NULL, state TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0, next_at TEXT NOT NULL, binding TEXT NOT NULL, body TEXT NOT NULL, message_id TEXT, error TEXT, created_at TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS signals(id TEXT PRIMARY KEY, exact_key TEXT NOT NULL, family_key TEXT NOT NULL, issued_at TEXT NOT NULL, body TEXT NOT NULL);
       CREATE INDEX IF NOT EXISTS signal_exact ON signals(exact_key, issued_at);
@@ -65,6 +71,12 @@ export class Store {
       CREATE TRIGGER IF NOT EXISTS immutable_source_receipts_delete BEFORE DELETE ON source_receipts BEGIN SELECT RAISE(ABORT,'Source receipts cannot be removed'); END;
       CREATE TRIGGER IF NOT EXISTS immutable_receipts_update BEFORE UPDATE ON receipts BEGIN SELECT RAISE(ABORT,'Receipts are immutable'); END;
     `);
+    for(const table of ['experimental_forecasts','experimental_candidates','experimental_suggestions','experimental_grades','experimental_annotations']){
+      this.db.exec(`CREATE TRIGGER IF NOT EXISTS immutable_${table}_update BEFORE UPDATE ON ${table} BEGIN SELECT RAISE(ABORT,'Experimental records are immutable'); END;
+        CREATE TRIGGER IF NOT EXISTS immutable_${table}_delete BEFORE DELETE ON ${table} BEGIN SELECT RAISE(ABORT,'Experimental records cannot be removed'); END;`);
+    }
+    this.db.exec("CREATE TRIGGER IF NOT EXISTS immutable_experimental_outbox BEFORE UPDATE OF body,at,binding ON experimental_outbox BEGIN SELECT RAISE(ABORT,'Suggestion message content is immutable'); END;");
+    this.db.exec("CREATE TRIGGER IF NOT EXISTS immutable_experimental_outbox_delete BEFORE DELETE ON experimental_outbox BEGIN SELECT RAISE(ABORT,'Suggestion messages cannot be removed'); END;");
   }
   close() { this.db.close(); }
   transaction<T>(fn: () => T): T {

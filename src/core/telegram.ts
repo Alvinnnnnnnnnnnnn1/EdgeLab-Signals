@@ -45,6 +45,7 @@ export class Telegram implements NotificationTransport{
   }
   deliveryWindow(signal:Signal,at:string){const q=signal.decision.quote;return notificationWindow(at,new Date(Math.min(ms(q.expiresAt),ms(q.event.startsAt)-120000,ms(q.quotedAt)+this.config.screen.maxQuoteAgeSeconds*1000)).toISOString());}
   async status(){return{deliveredAt:null,failed:false};} // Bot API has no device delivery/read receipt.
+  async sendSuggestions(text:string){if(!this.config.liveSuggestionsEnabled||this.config.operatingMode==='disabled')throw new TelegramFailure('live_suggestions_disabled',false);const window=notificationWindow(this.clock());if(window.quiet)throw new TelegramFailure('telegram_quiet_hours',false,null,window.nextAt);return this.submit(text);}
   async sendResearch(text:string,canary=false){if(!canary&&!this.config.telegram.statusEnabled)throw new TelegramFailure('research_status_delivery_disabled',false);const window=notificationWindow(this.clock());if(!canary&&window.quiet)throw new TelegramFailure('telegram_quiet_hours',false,null,window.nextAt);return this.submit(text);}
 }
 

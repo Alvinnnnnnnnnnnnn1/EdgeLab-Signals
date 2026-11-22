@@ -37,7 +37,7 @@ export const termsSchema = z.object({
   integerPush: z.literal(true), dnpVoid: z.literal(true), source: receiptSchema,
 }).strict();
 export type Terms = z.infer<typeof termsSchema>;
-export const eventMappingSchema=z.object({oddsId:id,event:eventSchema,verifiedAt:stamp,source:receiptSchema}).strict();
+export const eventMappingSchema=z.object({oddsId:id,event:eventSchema,verifiedAt:stamp,source:receiptSchema,sourceStartsAt:stamp.optional(),clockBridgePolicy:z.literal('unique-team-pair-earliest-clock/1').optional(),canonicalFixtureSource:receiptSchema.optional()}).strict();
 export const playerMappingSchema=z.object({eventId:id,description:id,playerId:id,player:id,teamId:id,verifiedAt:stamp,source:receiptSchema}).strict();
 export const mappingProofSchema=z.object({event:eventMappingSchema,player:playerMappingSchema}).strict();
 export const quoteSchema = z.object({

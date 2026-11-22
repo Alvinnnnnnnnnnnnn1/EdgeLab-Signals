@@ -7,6 +7,7 @@ import type { Config } from './config';
 export function screen(quote:Quote,logs:GameLog[],context:Context|null,terms:Terms|null,validation:LiveValidation|null,config:Config,at:string,simulated=false):Decision {
   const q=quoteSchema.parse(quote),reasons:string[]=[];
   if(q.bookmaker!==config.bookmaker)reasons.push('Reference bookmaker mismatch');
+  if(q.mappingProof.event.clockBridgePolicy)reasons.push('Experimental fixture-clock bridges cannot enter qualified alerts');
   if(!config.leagues.includes(q.event.league))reasons.push('League disabled');
   try{assertReceipt(q.source,at,simulated);}catch(e){reasons.push((e as Error).message);}
   if(!quoteFresh(q,at,config.screen.maxQuoteAgeSeconds,config.scan.minBeforeStartSeconds))reasons.push('Price stale, expired, future-dated or event too close');

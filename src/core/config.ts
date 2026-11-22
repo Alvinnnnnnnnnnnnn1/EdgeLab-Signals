@@ -5,6 +5,8 @@ const provider = z.object({ enabled: z.boolean().default(false), tier: z.enum(['
 export const configSchema = z.object({
   database: z.string().default('.local/signals.sqlite'), networkEnabled: z.boolean().default(false), deliveryEnabled: z.boolean().default(false),
   operatingMode:z.enum(['disabled','research','shadow','qualified']).default('disabled'),
+  liveSuggestionsEnabled:z.boolean().default(false),
+  suggestionsGrantFile:z.string().nullable().default(null),
   research:z.object({maxRequestsPerCycle:z.number().int().min(1).max(2).default(1),maxCandidatesPerFixture:z.number().int().min(1).max(100).default(30),historicalBackfill:z.boolean().default(true),fixtureHours:z.number().min(1).max(24).default(6),rosterHours:z.number().min(1).max(48).default(24),injuryHours:z.number().min(1).max(12).default(4)}).prefault({}),
   telegram:z.object({allowlist:z.array(z.string().regex(/^[1-9]\d*$/)).default([]),statusEnabled:z.boolean().default(false),qualifiedEnabled:z.boolean().default(false),digestHour:z.number().int().min(0).max(23).default(9)}).prefault({}),
   bookmaker: z.literal('sportsbet').default('sportsbet'), leagues: z.array(leagueSchema).default(['NBA', 'NBL']),

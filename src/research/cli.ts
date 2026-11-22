@@ -16,17 +16,31 @@ import { researchRows,metadataDiff } from './metadata';
 import { benchmarkRun } from './benchmark-run';
 import { livePlan,liveStatus,liveOnce,liveWorker } from './live';
 import { registerResearchModels } from './shadow';
-import { configureMode,prepareLaunchAgent } from './operations';
+import { configureMode,prepareLaunchAgent,configureSuggestions } from './operations';
+import {suggestionsCycle} from '../suggestions/cycle';
+import {suggestionsAcquisitionPlan} from '../suggestions/allowance';
+import {upcomingFixtures} from '../suggestions/forecasts';
+import {readLedger} from '../suggestions/ledger';
 import { evaluateMinutes } from './minutes';
 import { researchBooks,MarketBenchmarkAdapter,reviewMarketReceipt } from './market-benchmarks';
 const [command = 'audit', ...args] = process.argv.slice(2);
 function save(path: string, value: unknown) { mkdirSync('.local/research-runs', { recursive: true, mode: 0o700 }); writeFileSync(path, JSON.stringify(value, null, 2), { mode: 0o600, flag: 'wx' }); return path; }
 async function main() {
-  if(command==='help'){console.log(`EdgeLab NBA research\n  live-plan | live-status\n  live-once --dry-run | --execute\n  activate research|shadow --confirm | deactivate --confirm\n  prepare-launchagent | worker\n  collection-plan | coverage\n  collect-plan MAX_REQUESTS [--execute]\n  collect SEASON FROM TO MAX_REQUESTS [--execute]\n  snapshot SOURCE_REFERENCE\n  benchmark DATASET as-of|retrospective [--target-season YYYY] [--prop points|rebounds|assists|threes] [--resume]\n  models-register FROZEN_REPORTS | minutes FROZEN_REPORTS\n  prospective FROZEN_REPORTS | prospective-score\n  market-plan EXACT_ODDS_EVENT_ID | market-review RETAINED_SOURCE_RECEIPT_ID\n  odds-plan | odds-coverage PRIVATE_GRANT --execute\nNetwork is quota-gated. Research, SHADOW, status delivery and qualified alerts are separate.`);return;}
+  if(command==='help'){console.log(`EdgeLab NBA research\n  live-plan | live-status\n  suggestions-plan | suggestions-status\n  suggestions-activate APPROVED_PRIVATE_GRANT --confirm\n  suggestions-enable --confirm | suggestions-disable --confirm\n  suggestions-once --execute\n  live-once --dry-run | --execute\n  activate research|shadow --confirm | deactivate --confirm\n  prepare-launchagent | worker\n  collection-plan | coverage\n  collect-plan MAX_REQUESTS [--execute]\n  collect SEASON FROM TO MAX_REQUESTS [--execute]\n  snapshot SOURCE_REFERENCE\n  benchmark DATASET as-of|retrospective [--target-season YYYY] [--prop points|rebounds|assists|threes] [--resume]\n  models-register FROZEN_REPORTS | minutes FROZEN_REPORTS\n  prospective FROZEN_REPORTS | prospective-score\n  market-plan EXACT_ODDS_EVENT_ID | market-review RETAINED_SOURCE_RECEIPT_ID\n  odds-plan | odds-coverage PRIVATE_GRANT --execute\nNetwork is quota-gated. Research, SHADOW, status delivery and qualified alerts are separate.`);return;}
   const config = loadConfig(), store = new Store(config.database), at = nowISO();
   try {
     const rows = ['audit','snapshot'].includes(command)?researchRows(store):[];
-    if(command==='minutes'){
+    if(command==='suggestions-plan')console.log(JSON.stringify(suggestionsAcquisitionPlan(upcomingFixtures(store,at)[0]?.event??null),null,2));
+    else if(command==='suggestions-status')console.log(JSON.stringify({enabled:config.liveSuggestionsEnabled,ledger:readLedger(store,config,at).summary,lastRun:store.get('suggestions:last-run')},null,2));
+    else if(command==='suggestions-activate'){
+      if(args.length!==2||args[1]!=='--confirm')throw new Error('Use suggestions-activate APPROVED_PRIVATE_GRANT --confirm');console.log(JSON.stringify(configureSuggestions(store,true,args[0],true),null,2));
+    }else if(command==='suggestions-enable'){
+      if(args.length!==1||args[0]!=='--confirm')throw new Error('Use suggestions-enable --confirm; prices stay blocked without a finite grant');console.log(JSON.stringify(configureSuggestions(store,true,null,true),null,2));
+    }else if(command==='suggestions-disable'){
+      if(args.length!==1||args[0]!=='--confirm')throw new Error('Use suggestions-disable --confirm');console.log(JSON.stringify(configureSuggestions(store,false,null,true),null,2));
+    }else if(command==='suggestions-once'){
+      if(args.length!==1||args[0]!=='--execute')throw new Error('Use suggestions-once --execute after explicit feature activation');console.log(JSON.stringify(await suggestionsCycle(store,config,{manual:true}),null,2));
+    }else if(command==='minutes'){
       if(args.length!==1)throw new Error('Use minutes FROZEN_BENCHMARK_REPORTS');const reports=JSON.parse(readFileSync(args[0],'utf8')) as Experiment[],report=reports.find(r=>r.league==='NBA'&&r.prop==='points'&&r.state==='evaluated');if(!report)throw new Error('Evaluated NBA benchmark required');const artifact=artifactSchema.parse(report.artifact),dataset=loadDataset(`.local/datasets/${artifact.datasetId}.json`),result=evaluateMinutes(dataset,report);console.log(JSON.stringify({...result,path:save(`.local/research-runs/minutes-${at.replaceAll(':','-')}.json`,result)},null,2));
     }else if(command==='activate'){
       if(!['research','shadow'].includes(args[0])||args[1]!=='--confirm'||args.length!==2)throw new Error('Use activate research|shadow --confirm; qualified alerts cannot be activated here');console.log(JSON.stringify(configureMode(store,args[0] as 'research'|'shadow',true),null,2));

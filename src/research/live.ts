@@ -14,6 +14,8 @@ import { loadEvidence } from '../providers/import';
 import { enqueueResearchDigest,dispatchTelegramStatus,telegramBinding,Telegram } from '../core/telegram';
 import { researchSchedule,nextRoutineAt,PREGAME_MINUTES,notificationWindow,localParts } from './schedule';
 import type { reviewMarketReceipt } from './market-benchmarks';
+import { suggestionsCycle } from '../suggestions/cycle';
+import {settleSuggestions,scoreExperimentalForecasts} from '../suggestions/engine';
 
 type Job={id:string;kind:string;next_at:string;deadline:string|null;state:string;attempts:number;body:string;error:string|null};
 const sourceJobs=new Set(['fixtures','roster','injuries','finals','history']);
@@ -43,6 +45,7 @@ export function liveStatus(store:Store,config:Config,at=nowISO()){
   return{at,mode:config.operatingMode,researchActive:config.operatingMode!=='disabled'&&!!heartbeat&&['running','waiting'].includes(heartbeat.state)&&ms(at)-ms(heartbeat.at)<180000,scheduler:heartbeat?{...heartbeat,stale:ms(at)-ms(heartbeat.at)>=180000}:{state:'not_started',stale:true},
     lastRun:last,bdl:bdlQuota(store,config,at),fixtureDiscovery:fixtures,rosterDiscovery:roster,dataFreshness:{fixtures:freshness(fixtures,config.research.fixtureHours),roster:freshness(roster,config.research.rosterHours)},gap:store.get('live:gap'),models:count('research_models'),
     forecasts:{verifiedAvailability:count('prospective_forecasts'),conditionalShadow:count('shadow_forecasts')},modelPromoted:false,
+    experimentalSuggestions:{enabled:config.liveSuggestionsEnabled,forecasts:count('experimental_forecasts'),issued:count('experimental_suggestions'),lastRun:store.get('suggestions:last-run'),market:store.get('suggestions:last-market'),qualifiedGateUnchanged:true},
     schedule:{...researchSchedule(at),notification:notificationWindow(at),deadlineTasks:table(store,'research_jobs')?store.db.prepare("SELECT kind,next_at,deadline,state,error FROM research_jobs WHERE deadline>? AND state IN ('queued','deferred') ORDER BY next_at LIMIT 8").all(at):[],pendingStatus:count('telegram_outbox')?Number((store.db.prepare("SELECT count(*) AS n FROM telegram_outbox WHERE kind='research-status' AND state IN ('pending','retryable_failed')").get() as {n:number}).n):0},
     marketBenchmarks:{primary:'sportsbet',optional:['tab','ladbrokes_au'],state:'prepared_unverified',recurringPaidRequests:false,review:store.get<ReturnType<typeof reviewMarketReceipt>>('markets:last-review')},
     marketStatus:'MARKET_DATA_NOT_AUTHORISED',telegram:{verified:tgVerified,statusEnabled:config.telegram.statusEnabled,qualifiedEnabled:false},qualifiedOpportunityAlerts:'disabled',nextDue:table(store,'research_jobs')?store.db.prepare("SELECT min(next_at) AS at FROM research_jobs WHERE state IN ('queued','deferred','running')").get():null};
@@ -131,7 +134,7 @@ export async function liveOnce(store:Store,config:Config,options:{dryRun?:boolea
           if(cursor!==undefined){store.set(`live:source-progress:${job.kind}`,{cursor,seen:[...(expiredScope?[]:body.seen??[]),cursor],scope});finish(job,add(now,config.providers.balldontlie.minIntervalSeconds+1),'queued',body.pregame?{pregame:body.pregame}:{});}
           else{store.set(`live:source-progress:${job.kind}`,null);store.set(`live:${job.kind}-complete`,{at:page.receipt.retrievedAt,source:page.receipt});finish(job,body.pregame?now:nextRoutineAt(add(now,interval*3600)),body.pregame?'complete':'queued',body.pregame?{pregame:body.pregame}:{});}
         }else if(job.kind==='finals'){
-          const scope=body.scope??{from:add(now,-3*86400).slice(0,10),to:add(now,-86400).slice(0,10)},season=Number(scope.to.slice(0,4))-(Number(scope.to.slice(5,7))<7?1:0),epoch=body.epoch??`${now.slice(0,10)}:${Math.floor(Number(now.slice(11,13))/6)}`;
+          const scope=body.scope??{from:add(now,-2*86400).slice(0,10),to:now.slice(0,10)},season=Number(scope.to.slice(0,4))-(Number(scope.to.slice(5,7))<7?1:0),epoch=body.epoch??`${now.slice(0,10)}:${Math.floor(Number(now.slice(11,13))/6)}`;
           const result=await bdl.maintenanceStats(season,scope.from,scope.to,now,epoch);finish(job,result.complete?add(now,6*3600):add(now,config.providers.balldontlie.minIntervalSeconds+1),'queued',result.complete?{}:{scope,epoch});
           if(result.exclusions.length)outcomes.push({job:job.id,state:'partial',reason:`${result.exclusions.length} source rows excluded; originals retained`});
         }else if(job.kind==='history'){
@@ -151,6 +154,9 @@ export async function liveOnce(store:Store,config:Config,options:{dryRun?:boolea
           const result=freezeConditionalShadow(store,current.event,current.source,conditionalPlayers,models,now,config.research.maxCandidatesPerFixture,config.operatingMode==='shadow',clock);counts.playersExamined+=result.examined;counts.predictionsGenerated+=result.generated;counts.forecastsFrozen+=result.inserted;counts.missingAvailability+=conditionalPlayers.slice(0,result.examined).filter(p=>p.injuryStatus?.toLowerCase()!=='out').length;counts.playersExcluded+=new Set(result.exclusions.map(e=>e.playerId)).size;comparisons.push(...result.disagreement);for(const e of result.exclusions)outcomes.push({job:e.playerId,state:'blocked',reason:e.reason});
           finish(job,now,'complete',request);
         }else if(job.kind==='score'||job.kind==='monitor'){
+          // Stopping new suggestions must never remove existing issues from
+          // automatic grading or their independent forecast evaluation.
+          if(job.kind==='score'&&table(store,'experimental_suggestions')){const settlement=settleSuggestions(store,now),forecasts=scoreExperimentalForecasts(store,now);store.set('live:experimental-scoring',{at:now,settlement,forecasts});}
           const verified=scoreProspective(store,now),shadow=scoreProspective(store,now,'conditional-shadow');if(job.kind==='score'){const ids=[...verified.gradedIds,...shadow.gradedIds],previous=new Set(store.get<string[]>('live:graded-ids')??[]);counts.forecastsGraded+=ids.filter(id=>!previous.has(id)).length;store.set('live:graded-ids',[...new Set([...previous,...ids])]);}
           store.set(job.kind==='score'?'live:scoring':'live:monitoring',{at:now,verifiedAvailability:verified,conditionalShadow:shadow,qualifiedEligible:false});
           if(job.kind==='score')for(const report of [verified,shadow]){const{at:ignored,...content}=report;void ignored;store.db.prepare('INSERT OR IGNORE INTO research_grades VALUES (?,?,?,?)').run(hash(content),now,report.classification,JSON.stringify(report));}
@@ -185,6 +191,7 @@ export async function liveWorker(store:Store,readConfig:()=>Config,signal:AbortS
       const previous=store.get<{at:string}>('live:worker');if(previous&&ms(at)-ms(previous.at)>180000)store.set('live:gap',{from:previous.at,to:at,reason:'Sleep, stopped process or outage; continuity unverified'});
       if(!store.renew('live-worker',lease,at,150))throw new Error('Research worker lease expired');
       store.set('live:worker',{at,state:'running'});try{const result=await liveOnce(store,config,{signal});researchLog({at:nowISO(),state:result.state,runId:'id' in result?result.id:null,networkRequests:'networkRequests' in result?result.networkRequests:0});}catch{researchLog({at:nowISO(),state:'cycle_error'});}
+      if(config.liveSuggestionsEnabled&&!signal.aborted){if(!store.renew('live-worker',lease,nowISO(),150))throw new Error('Research worker lease expired');try{const result=await suggestionsCycle(store,config);researchLog({at:nowISO(),experimentalSuggestions:result.state,networkRequests:result.networkRequests});}catch{researchLog({at:nowISO(),experimentalSuggestions:'cycle_error'});}}
       store.set('live:worker',{at:nowISO(),state:'waiting'});await new Promise<void>(resolve=>{const timer=setTimeout(done,60000);function done(){clearTimeout(timer);signal.removeEventListener('abort',done);resolve();}signal.addEventListener('abort',done,{once:true});if(signal.aborted)done();});
     }}finally{store.set('live:worker',{at:nowISO(),state:'stopped'});store.release('live-worker',lease);}
 }

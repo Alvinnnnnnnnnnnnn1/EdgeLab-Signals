@@ -1,5 +1,7 @@
 # Local operating guide
 
+V1.4.2: [experimental NBA suggestions, real Sportsbet/Telegram run and Signals Ledger](v142-experimental-suggestions.md). The independent experimental feature is enabled; two genuine suggestions were issued from 86 quote-side candidates and accepted in one Telegram message. Five requests/eight credits consumed the reviewed finite allowance. Genuine settlement remains pending; the full live lifecycle is not yet verified. Qualified model gates remain unchanged.
+
 V1.4.1: [Melbourne daytime windows, quiet-hour delivery and optional bookmaker preparation](v141-daytime-research.md). The 60-second heartbeat is separate from acquisition; independent T−90/T−20 source tasks retain overnight fixture deadlines. Sportsbet remains primary; TAB/Ladbrokes adapters are offline preparation, with no new paid allowance or verified NBA prop coverage.
 
 Current research-only worker, Telegram canary, explicit operating modes and activation/stop commands: [V1.4 live research foundation](v14-live-research-foundation.md). New installations stay disabled; research/SHADOW and status delivery are separate from qualified opportunity alerts. Use the new research service rather than activating the legacy quote-screening worker below.

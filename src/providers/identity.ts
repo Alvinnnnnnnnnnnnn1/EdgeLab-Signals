@@ -18,13 +18,18 @@ export function verifyRegistry(raw: unknown, store: Store, now: string, simulate
     const events = registry.events.filter(e => e.event.id === p.eventId);
     if (events.length !== 1 || ![events[0].event.homeId, events[0].event.awayId].includes(p.teamId)) throw new Error('Roster bridge outside exact fixture');
   }
+  for(const mapping of registry.events)if(mapping.clockBridgePolicy){
+    if(!mapping.sourceStartsAt||!mapping.canonicalFixtureSource||ms(mapping.sourceStartsAt)<ms(mapping.event.startsAt)||ms(mapping.sourceStartsAt)-ms(mapping.event.startsAt)>15*60000)throw new Error('Invalid experimental source-clock bridge');
+    assertReceipt(mapping.canonicalFixtureSource,now,simulated);if(!store.hasReceipt(mapping.canonicalFixtureSource))throw new Error('Canonical fixture source proof missing');
+  }
   return registry;
 }
-export function exactEvent(registry: Registry, input: { id: string; sport_key: string; home_team: string; away_team: string; commence_time: string }): Event {
+export function exactEvent(registry: Registry, input: { id: string; sport_key: string; home_team: string; away_team: string; commence_time: string },allowClockBridge=false): Event {
   const matches = registry.events.filter(e => e.oddsId === input.id);
   if (matches.length !== 1) throw new Error('Exact event mapping missing or ambiguous');
   const e = matches[0].event;
-  if (input.sport_key !== (e.league === 'NBA' ? 'basketball_nba' : 'basketball_nbl') || input.home_team !== e.home || input.away_team !== e.away || ms(input.commence_time) !== ms(e.startsAt)) throw new Error('Event metadata changed; reverify exact bridge');
+  const mapping=matches[0],clockMatches=ms(input.commence_time)===ms(e.startsAt)||allowClockBridge&&mapping.clockBridgePolicy==='unique-team-pair-earliest-clock/1'&&!!mapping.sourceStartsAt&&ms(input.commence_time)===ms(mapping.sourceStartsAt)&&ms(mapping.sourceStartsAt)>=ms(e.startsAt)&&ms(mapping.sourceStartsAt)-ms(e.startsAt)<=15*60000;
+  if (input.sport_key !== (e.league === 'NBA' ? 'basketball_nba' : 'basketball_nbl') || input.home_team !== e.home || input.away_team !== e.away || !clockMatches) throw new Error('Event metadata changed; reverify exact bridge');
   return e;
 }
 export function exactPlayer(registry: Registry, eventId: string, description: string) {

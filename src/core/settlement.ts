@@ -1,6 +1,6 @@
 import { assertReceipt, gameLogSchema, hash, ms, type GameLog } from './domain';
 import { Store, type Outcome, type Signal } from './store';
-export function grade(signal:Signal,raw:GameLog,at:string):Outcome {
+export function grade(signal:Pick<Signal,'id'|'issuedAt'|'simulated'>&{decision:Pick<Signal['decision'],'quote'>},raw:GameLog,at:string):Outcome {
   const r=gameLogSchema.parse(raw),q=signal.decision.quote;
   assertReceipt(r.source,at,signal.simulated);for(const s of r.supportingSources??[])assertReceipt(s,at,signal.simulated);
   if(r.source.simulated!==signal.simulated)throw new Error('Simulation/live settlement mismatch');

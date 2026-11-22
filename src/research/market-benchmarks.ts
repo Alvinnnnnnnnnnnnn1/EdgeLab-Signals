@@ -24,8 +24,8 @@ export class MarketBenchmarkAdapter {
       prices:{path:`${root}/odds`,query:{bookmakers:this.bookmaker,markets:Object.values(marketKeys).join(','),oddsFormat:'decimal',dateFormat:'iso'},maximumCredits:4},
       requires:['new owner-approved finite shared allowance','account-level quota coordination with SportsModel V6','event-specific market discovery','exact identities and independently verified bookmaker terms']};
   }
-  discover(raw:unknown,receipt:Receipt,registry:Registry){
-    const input=catalogueSchema.parse(raw),event=exactEvent(registry,input),books=input.bookmakers.filter(b=>b.key===this.bookmaker);
+  discover(raw:unknown,receipt:Receipt,registry:Registry,allowClockBridge=false){
+    const input=catalogueSchema.parse(raw),event=exactEvent(registry,input,allowClockBridge),books=input.bookmakers.filter(b=>b.key===this.bookmaker);
     if(books.length>1)throw new Error('Duplicate bookmaker catalogue');
     return {eventId:event.id,bookmaker:this.bookmaker,observedAt:receipt.retrievedAt,source:receipt,
       markets:Object.entries(marketKeys).map(([prop,key])=>{const found=books[0]?.markets.filter(m=>m.key===key)??[];

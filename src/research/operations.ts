@@ -4,6 +4,8 @@ import { configSchema,loadConfig } from '../core/config';
 import { Store } from '../core/store';
 import { researchModels } from './shadow';
 import { nowISO } from '../core/domain';
+import {Telegram} from '../core/telegram';
+import {readSuggestionsGrant} from '../suggestions/allowance';
 
 function privateConfigPath(){const path=resolve(process.env.EDGELAB_CONFIG||'config/local.json');if(!path.startsWith(resolve(process.cwd())+'/')||(statSync(path).mode&0o077)!==0)throw new Error('Owner-only Signals configuration inside this repository required');return path;}
 export function configureMode(store:Store,mode:'disabled'|'research'|'shadow',confirmed:boolean){
@@ -18,6 +20,12 @@ export function configureMode(store:Store,mode:'disabled'|'research'|'shadow',co
 }
 export function configureStatusMessages(enabled:boolean,confirmed:boolean){
   if(!confirmed)throw new Error('Research-status messages require explicit --confirm');const path=privateConfigPath(),raw=JSON.parse(readFileSync(path,'utf8')),config=loadConfig(path);raw.telegram={...config.telegram,statusEnabled:enabled,qualifiedEnabled:false};configSchema.parse(raw);writeFileSync(path,JSON.stringify(raw,null,2)+'\n',{mode:0o600});return{statusEnabled:enabled,qualifiedEnabled:false};
+}
+export function configureSuggestions(store:Store,enabled:boolean,grantFile:string|null,confirmed:boolean){
+  if(!confirmed)throw new Error('Use --confirm for owner-controlled live suggestions');const path=privateConfigPath(),raw=JSON.parse(readFileSync(path,'utf8')),config=loadConfig(path);
+  if(enabled){if(config.operatingMode==='disabled'||!config.networkEnabled||researchModels(store).length!==4||!new Telegram(config,store).verified())throw new Error('Active independent NBA research, four models and verified private Telegram required');if(grantFile){if(!resolve(grantFile).startsWith(resolve(process.cwd())+'/'))throw new Error('Keep the private grant inside Signals');readSuggestionsGrant(grantFile,nowISO());}}
+  raw.liveSuggestionsEnabled=enabled;raw.suggestionsGrantFile=enabled?grantFile:null;raw.deliveryEnabled=false;raw.telegram={...config.telegram,qualifiedEnabled:false};raw.providers={...config.providers,...raw.providers,odds:{...config.providers.odds,enabled:false}};
+  configSchema.parse(raw);writeFileSync(path,JSON.stringify(raw,null,2)+'\n',{mode:0o600});return{liveSuggestionsEnabled:enabled,finiteGrantConfigured:!!grantFile,qualifiedAlerts:false,persistentOdds:false};
 }
 export function prepareLaunchAgent(){
   const root=resolve(process.cwd()),node=process.execPath,config=privateConfigPath();mkdirSync('.local/ops',{recursive:true,mode:0o700});mkdirSync('.local/logs',{recursive:true,mode:0o700});
