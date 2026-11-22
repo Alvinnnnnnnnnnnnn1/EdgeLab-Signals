@@ -10,6 +10,7 @@ import {comparableSides} from '../research/markets';
 import {experimentalForecasts,fixtureProof,rosterProof,retained,SUGGESTION_POLICY,type ExperimentalForecast} from './forecasts';
 import {scoreRows,pairedDifference,type ScoredPrediction} from '../research/scoring';
 import {thresholds} from '../research/experiment';
+import {ensureSuggestionFamilies,duplicateFamilyDelivery} from './families';
 
 export interface Suggestion {id:string;at:string;quote:Quote;forecastId:string;forecast:ExperimentalForecast;win:number;push:number;estimatedEV:number;conservativeEV:number;disagreement:number;score:number;reasoning:string;confidence:string;terms:Terms;hypotheticalStakeAUD:5;experimental:true;validated:false;supersedes:string|null;}
 export function suggestions(store:Store):Suggestion[]{return(store.db.prepare('SELECT body FROM experimental_suggestions ORDER BY at,id').all() as {body:string}[]).map(r=>JSON.parse(r.body));}
@@ -36,6 +37,7 @@ export function assessSuggestion(q:Quote,paired:Quote,f:ExperimentalForecast,ter
   return{win:p.win,push:p.push,estimatedEV,conservativeEV,disagreement,score,confidence:'Experimental · limited validation',reasoning:`Estimated ${f.expectedMinutes.toFixed(1)} minutes from ${f.n} earlier complete games; ${f.model} supports this side. Minutes sensitivity and the simple-model comparison retain a positive estimated edge; participation is unconfirmed.`,market};
 }
 export function rankAndIssue(store:Store,config:Config,quotes:Quote[],terms:Terms[],at:string,clock=()=>at){
+  ensureSuggestionFamilies(store);
   archivePricedCandidates(store,quotes,at);
   const forecasts=experimentalForecasts(store),eligible:{quote:Quote;forecast:ExperimentalForecast;terms:Terms;assessment:ReturnType<typeof assessSuggestion>}[]=[],excluded:{playerId:string;prop:Prop;reason:string}[]=[];
   for(const q of quotes){try{
@@ -45,17 +47,15 @@ export function rankAndIssue(store:Store,config:Config,quotes:Quote[],terms:Term
     eligible.push({quote:q,forecast:f,terms:t[0],assessment:assessSuggestion(q,pair[0],f,t[0],at)});
   }catch(e){excluded.push({playerId:q.playerId,prop:q.prop,reason:(e as Error).message});}}
   eligible.sort((a,b)=>b.assessment.score-a.assessment.score||hash(a.quote).localeCompare(hash(b.quote)));
-  const issued:Suggestion[]=[],families=new Set<string>();
+  const issued:Suggestion[]=[],families=new Set<string>();let permanentlySuppressed=0;
   for(const item of eligible){const {quote:q,forecast:f}=item,family=hash([q.event.id,q.playerId,q.prop]);if(families.has(family))continue;families.add(family);if(!config.liveSuggestionsEnabled)continue;
     const now=clock();if(!quoteFresh(q,now,180,120)||notificationWindow(now,q.expiresAt).state!=='ready')continue;currentPlayerEvidence(store,f,now);
-    const row=store.db.prepare('SELECT body FROM experimental_suggestions WHERE family=? ORDER BY at DESC LIMIT 1').get(family) as {body:string}|undefined,previous=row?JSON.parse(row.body) as Suggestion:null;
-    if(previous&&(ms(now)-ms(previous.at)<15*60000||q.side!==previous.quote.side||Math.abs(q.line-previous.quote.line)<1&&Math.abs(q.decimalOdds-previous.quote.decimalOdds)<.1||ms(q.quotedAt)<=ms(previous.quote.quotedAt)))continue;
-    const record:Suggestion={id:hash([SUGGESTION_POLICY,f.id,q,now]),at:now,quote:q,forecastId:f.id,forecast:f,...item.assessment,terms:item.terms,hypotheticalStakeAUD:5,experimental:true,validated:false,supersedes:previous?.id??null};
-    store.transaction(()=>{store.db.prepare('INSERT INTO experimental_suggestions VALUES (?,?,?,?)').run(record.id,now,family,JSON.stringify(record));enqueueSuggestionBatch(store,[record],now);});issued.push(record);
+    const record:Suggestion={id:hash([SUGGESTION_POLICY,f.id,q,now]),at:now,quote:q,forecastId:f.id,forecast:f,...item.assessment,terms:item.terms,hypotheticalStakeAUD:5,experimental:true,validated:false,supersedes:null};
+    const created=store.transaction(()=>{if(store.db.prepare('SELECT family FROM experimental_suggestion_families WHERE family=?').get(family))return false;store.db.prepare('INSERT INTO experimental_suggestions VALUES (?,?,?,?)').run(record.id,now,family,JSON.stringify(record));enqueueSuggestionBatch(store,[record],now);return true;});if(created)issued.push(record);else permanentlySuppressed++;
   }
   // Consolidate new recommendations from this fixture into bounded Telegram pages.
   if(issued.length>1){store.transaction(()=>{const pending=issued.filter(s=>store.db.prepare("SELECT id FROM experimental_outbox WHERE id=? AND state='pending'").get(hash(['suggestion-batch',[s.id]])));for(const s of pending)store.db.prepare("UPDATE experimental_outbox SET state='consolidated' WHERE id=? AND state='pending'").run(hash(['suggestion-batch',[s.id]]));let batch:Suggestion[]=[];for(const s of pending){if(batch.length&&suggestionMessage([...batch,s]).length>3500){enqueueSuggestionBatch(store,batch,at);batch=[];}batch.push(s);}if(batch.length)enqueueSuggestionBatch(store,batch,at);});}
-  return{at,pricedCandidates:quotes.length,eligible:eligible.length,issued:issued.length,ids:issued.map(s=>s.id),excluded};
+  return{at,pricedCandidates:quotes.length,eligible:eligible.length,issued:issued.length,ids:issued.map(s=>s.id),permanentlySuppressed,excluded};
 }
 export function archivePricedCandidates(store:Store,quotes:Quote[],at:string){
   const forecasts=experimentalForecasts(store);let inserted=0;
@@ -70,14 +70,14 @@ export function suggestionMessage(rows:Suggestion[]){return['EdgeLab Signals —
 function enqueueSuggestionBatch(store:Store,rows:Suggestion[],at:string){const ids=rows.map(s=>s.id),id=hash(['suggestion-batch',ids]);store.db.prepare("INSERT OR IGNORE INTO experimental_outbox(id,at,body,binding,state,next_at) VALUES (?,?,?,?,'pending',?)").run(id,at,JSON.stringify({ids,text:suggestionMessage(rows)}),telegramBinding(),at);store.db.prepare("UPDATE experimental_outbox SET state='pending',next_at=? WHERE id=? AND state='consolidated'").run(at,id);}
 export async function dispatchSuggestions(store:Store,config:Config,transport=new Telegram(config,store),clock=()=>new Date().toISOString()){
   if(!config.liveSuggestionsEnabled||!config.networkEnabled||config.operatingMode==='disabled')return{accepted:0,state:'disabled'};const lease=store.acquire('experimental-delivery',clock(),90);if(!lease)return{accepted:0,state:'busy'};let accepted=0;
-  try{store.db.prepare("UPDATE experimental_outbox SET state='uncertain',error='Interrupted submission; no blind resend' WHERE state='sending'").run();
+  try{ensureSuggestionFamilies(store);store.db.prepare("UPDATE experimental_outbox SET state='uncertain',error='Interrupted submission; no blind resend' WHERE state='sending'").run();
     const records=new Map(suggestions(store).map(s=>[s.id,s]));const rows=store.db.prepare("SELECT * FROM experimental_outbox WHERE state IN ('pending','retryable_failed') AND next_at<=? ORDER BY at,id").all(clock()) as {id:string;body:string;binding:string;attempts:number}[];
     for(const out of rows){if(!store.renew('experimental-delivery',lease,clock(),90))break;const body=JSON.parse(out.body) as {ids:string[];text:string},signals=body.ids.map(id=>records.get(id));
       const now=clock();if(signals.some(s=>!s||!quoteFresh(s.quote,now,180,120)||notificationWindow(now,s.quote.expiresAt).state==='expired')){store.db.prepare("UPDATE experimental_outbox SET state='expired',error='Pregame price expired before permitted delivery' WHERE id=?").run(out.id);continue;}
       const window=notificationWindow(now);if(window.quiet){store.db.prepare('UPDATE experimental_outbox SET next_at=? WHERE id=?').run(window.nextAt,out.id);continue;}
       if(out.binding!==telegramBinding()||out.attempts>=3||!transport.verified(now))continue;
       try{for(const s of signals)currentPlayerEvidence(store,s!.forecast,clock());}catch{store.db.prepare("UPDATE experimental_outbox SET state='expired',error='Current source evidence changed or expired' WHERE id=?").run(out.id);continue;}
-      if(!store.db.prepare("UPDATE experimental_outbox SET state='sending',attempts=attempts+1 WHERE id=? AND state IN ('pending','retryable_failed')").run(out.id).changes)continue;
+      const claimed=store.transaction(()=>{const row=store.db.prepare('SELECT state,message_id FROM experimental_outbox WHERE id=?').get(out.id)as{state:string;message_id:string|null};if(!['pending','retryable_failed'].includes(row.state))return false;if(row.message_id!==null||duplicateFamilyDelivery(store,out.id,body.ids)){store.db.prepare("UPDATE experimental_outbox SET state='expired',error='PERMANENT_FAMILY_DUPLICATE; original records retained' WHERE id=?").run(out.id);return false;}return!!store.db.prepare("UPDATE experimental_outbox SET state='sending',attempts=attempts+1 WHERE id=? AND state IN ('pending','retryable_failed')").run(out.id).changes;});if(!claimed)continue;
       try{const result=await transport.sendSuggestions(body.text);store.db.prepare("UPDATE experimental_outbox SET state='accepted',message_id=?,error=NULL WHERE id=?").run(result.guid,out.id);accepted++;}
       catch(e){const f=e instanceof TelegramFailure?e:new TelegramFailure('uncertain_suggestion_submission',true);if(f.kind==='telegram_quiet_hours'&&f.deferUntil){store.db.prepare("UPDATE experimental_outbox SET state='expired',error='Quote expires before quiet-hour release' WHERE id=?").run(out.id);continue;}store.db.prepare('UPDATE experimental_outbox SET state=?,error=?,next_at=? WHERE id=?').run(f.uncertain?'uncertain':f.retryAfter?'retryable_failed':'rejected',f.kind,new Date(ms(clock())+(f.retryAfter??60)*1000).toISOString(),out.id);}
     }return{accepted,state:'completed',deviceDelivery:'unobservable'};

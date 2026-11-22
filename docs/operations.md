@@ -119,3 +119,7 @@ Legacy `signals evaluate` remains a V1 exploratory/synthetic compatibility comma
 ## V1.4.5 research reliability
 
 V1.4.5 operational extension: `npm run reliability -- health` provides a read-only Terminal report without provider/account requests or messages. It distinguishes the legacy worker from the prepared reliable controller and reports leases, source/deadline work, grading and analytics. See [v145-worker-reliability.md](v145-worker-reliability.md) for evidence, benchmarks, tests and exact research-only deployment/rollback commands. Activation requires separate explicit owner approval; Sportsbet remains independently running.
+
+## V1.4.5.1 recommendation families
+
+The prepared policy permits one recommendation per `hash([event.id, playerId, prop])` permanently, including all prior issued rows regardless of delivery/grading state. Independent price research continues. See [v1451-permanent-recommendation-dedup.md](v1451-permanent-recommendation-dedup.md) for the eight-family historical audit, atomic database guard, delivery safeguards, tests and market-only deployment/rollback plan. The market worker requires a separately approved restart; do not restart SHADOW or migrate the live guard during preparation.

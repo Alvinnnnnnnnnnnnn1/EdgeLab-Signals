@@ -46,6 +46,8 @@ The initial version requires ten complete earlier participating games, five curr
 
 Ranking prioritises practical hit probability, with bounded EV, history support and disagreement components. There is **no daily recommendation cap or presentation limit**. One current selection per fixture/player/prop avoids contradictory duplicate positions. Only materially changed same-side opportunities after 15 minutes can create a linked update; original records remain in evaluation. The actual count of two came from the evidence, not a configured two-pick maximum.
 
+The linked-update behaviour above is the historical V1.4.2 rule. [V1.4.5.1](v1451-permanent-recommendation-dedup.md) replaces it with permanent one-issue-per-fixture/player/prop suppression; consult that report for prepared versus live activation status.
+
 ## Scheduling, delivery and recovery
 
 The existing 60-second heartbeat, seven Melbourne daytime windows, T−90/T−20 tasks, source TTLs/checkpoints, BDL quotas and cooldowns remain. Experimental work is bounded to one fixture per cycle for forecast computation; that is a work budget, not a pick limit. Ordinary acquisition follows the daytime windows or genuine pregame stages. The explicitly owner-approved foreground verification used its one-off manual invocation. Quiet hours remain 00:30–07:00; essential sources and forecasts can continue independently. Bookmaker requests are deferred when a quiet window would make delivery stale.
