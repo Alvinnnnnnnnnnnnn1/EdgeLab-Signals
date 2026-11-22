@@ -18,6 +18,9 @@ import { suggestionsCycle } from '../suggestions/cycle';
 import {settleSuggestions,scoreExperimentalForecasts} from '../suggestions/engine';
 
 type Job={id:string;kind:string;next_at:string;deadline:string|null;state:string;attempts:number;body:string;error:string|null};
+/** Explicitly injected only by the reviewed V1.4.5 worker entry point. Legacy
+ * service commands retain their existing behaviour until controlled rollout. */
+export interface ReliableCycleHooks {maxJobs:number;maxRequests:number;assertOwner:()=>void;onJob?:(job:{id:string;kind:string;deadline:string|null})=>void;finalRelevant?:(at:string)=>boolean;finalStep?:(http:JsonHTTP,at:string)=>Promise<{nextAt:string;reason:string|null}>;}
 const sourceJobs=new Set(['fixtures','roster','injuries','finals','history']);
 const add=(at:string,seconds:number)=>new Date(ms(at)+seconds*1000).toISOString();
 const tomorrow=(at:string)=>new Date(Date.parse(`${at.slice(0,10)}T00:00:00Z`)+86400000).toISOString();
@@ -58,7 +61,7 @@ export function livePlan(store:Store,config:Config,at=nowISO()){
     initialTasks:jobs.length?[]:['fixtures','roster','injuries','finals','score','monitor','digest',...(config.research.historicalBackfill?['history']:[])],marketStatus:'MARKET_DATA_NOT_AUTHORISED',qualifiedAlerts:false,sourcePriority:['current results and future fixtures','2025–26','2024–25'],telegramStatusOptIn:config.telegram.statusEnabled};
 }
 
-export async function liveOnce(store:Store,config:Config,options:{dryRun?:boolean;clock?:()=>string;http?:JsonHTTP;manual?:boolean;signal?:AbortSignal}={}){
+export async function liveOnce(store:Store,config:Config,options:{dryRun?:boolean;clock?:()=>string;http?:JsonHTTP;manual?:boolean;signal?:AbortSignal;reliability?:ReliableCycleHooks}={}){
   const clock=options.clock??nowISO,at=clock();if(options.dryRun)return livePlan(store,config,at);
   if(config.operatingMode==='disabled'&&!options.manual)return{state:'disabled',networkRequests:0};
   const lease=store.acquire('live-cycle',at,150);if(!lease)return{state:'busy',networkRequests:0};
@@ -80,8 +83,10 @@ export async function liveOnce(store:Store,config:Config,options:{dryRun?:boolea
     // Recover interrupted work through saved source cursors and immutable keys.
     store.db.prepare("UPDATE research_jobs SET state='queued',error='Recovered interrupted job' WHERE state='running'").run();
     const jobs=store.db.prepare("SELECT * FROM research_jobs WHERE state IN ('queued','deferred') AND next_at<=? ORDER BY deadline IS NULL,deadline,CASE kind WHEN 'fixtures' THEN 0 WHEN 'roster' THEN 1 WHEN 'injuries' THEN 2 WHEN 'finals' THEN 3 WHEN 'pregame' THEN 4 WHEN 'score' THEN 5 WHEN 'monitor' THEN 6 WHEN 'digest' THEN 7 ELSE 8 END,next_at LIMIT 40").all(at) as unknown as Job[];
-    for(const job of jobs){
+    let processed=0;for(const job of jobs){
+      if(options.reliability&&processed>=options.reliability.maxJobs)break;
       if(options.signal?.aborted)break;
+      options.reliability?.assertOwner();
       const now=clock();if(!store.leaseValid('live-cycle',lease,now))throw new Error('Live cycle lease expired');
       if(job.deadline&&ms(now)>=ms(job.deadline)){finish(job,now,'expired',JSON.parse(job.body),'Missed pregame window or tip-off');outcomes.push({job:job.id,state:'expired'});continue;}
       const checkpoint=JSON.parse(job.body) as {cursor?:number;pregame?:{event:Event;window:number}};
@@ -90,7 +95,7 @@ export async function liveOnce(store:Store,config:Config,options:{dryRun?:boolea
         if(!current||current.status!=='scheduled'||hash(current.event)!==hash(event)){finish(job,now,'expired',checkpoint,'Fixture canceled or rescheduled');continue;}
         const fresh=store.get<{at:string}>(`live:${job.kind}-complete`),ttl=job.kind==='roster'?24*3600:900;
         if(!store.get(`live:source-progress:${job.kind}`)&&fresh&&ms(fresh.at)<=ms(now)&&ms(now)-ms(fresh.at)<ttl*1000){finish(job,now,'complete',checkpoint,'Fresh source reused');continue;}
-      }else if(job.kind!=='pregame'&&!researchSchedule(now).activeWindow){
+      }else if(job.kind!=='pregame'&&!(job.kind==='finals'&&options.reliability?.finalRelevant?.(now))&&!researchSchedule(now).activeWindow){
         finish(job,nextRoutineAt(now),'deferred',checkpoint,'OUTSIDE_DAYTIME_RESEARCH_WINDOW');outcomes.push({job:job.id,state:'deferred',reason:'OUTSIDE_DAYTIME_RESEARCH_WINDOW'});continue;
       }
       if(!checkpoint.pregame&&['roster','injuries'].includes(job.kind)&&!futureFixtures(store,now).some(f=>ms(f.event.startsAt)-ms(now)<=72*3600000)){
@@ -100,15 +105,15 @@ export async function liveOnce(store:Store,config:Config,options:{dryRun?:boolea
         const fresh=store.get<{at:string}>(`live:${job.kind}-complete`),hours=job.kind==='fixtures'?config.research.fixtureHours:job.kind==='roster'?config.research.rosterHours:config.research.injuryHours;
         if(fresh&&ms(fresh.at)<=ms(now)&&ms(now)-ms(fresh.at)<hours*3600000){finish(job,nextRoutineAt(add(fresh.at,hours*3600)),'queued',checkpoint,'Fresh source reused');continue;}
       }
-      if(job.kind==='finals'&&!(store.db.prepare("SELECT value FROM meta WHERE key LIKE 'live:fixture:%'").all() as {value:string}[]).some(r=>{const f=JSON.parse(r.value) as {event:Event;status:string},age=ms(now)-ms(f.event.startsAt);return ['scheduled','final'].includes(f.status)&&age>=3*3600000&&age<=4*86400000;})){
+      if(job.kind==='finals'&&!options.reliability?.finalRelevant?.(now)&&!(store.db.prepare("SELECT value FROM meta WHERE key LIKE 'live:fixture:%'").all() as {value:string}[]).some(r=>{const f=JSON.parse(r.value) as {event:Event;status:string},age=ms(now)-ms(f.event.startsAt);return ['scheduled','final'].includes(f.status)&&age>=3*3600000&&age<=4*86400000;})){
         finish(job,researchSchedule(now).nextWindow,'deferred',checkpoint,'NO_KNOWN_COMPLETED_FIXTURES');continue;
       }
       if(sourceJobs.has(job.kind)){
         const quota=bdlQuota(store,config,now),cooldown=quota.lastRequestAt?Math.max(0,ms(quota.lastRequestAt)+quota.minIntervalSeconds*1000-ms(now)):0;
-        const reason=!config.networkEnabled||!config.providers.balldontlie.enabled?'NETWORK_OR_SOURCE_DISABLED':quota.remaining===0?'BDL_DAILY_QUOTA_EXHAUSTED':total()-before>=config.research.maxRequestsPerCycle?'CYCLE_REQUEST_BUDGET':cooldown>0?'BDL_COOLDOWN':job.kind==='history'&&quota.remaining<=10?'RESERVED_DAILY_MAINTENANCE_CAPACITY':null;
+        const reason=!config.networkEnabled||!config.providers.balldontlie.enabled?'NETWORK_OR_SOURCE_DISABLED':quota.remaining===0?'BDL_DAILY_QUOTA_EXHAUSTED':total()-before>=(options.reliability?.maxRequests??config.research.maxRequestsPerCycle)?'CYCLE_REQUEST_BUDGET':cooldown>0?'BDL_COOLDOWN':job.kind==='history'&&quota.remaining<=10?'RESERVED_DAILY_MAINTENANCE_CAPACITY':null;
         if(reason){const next=reason==='BDL_DAILY_QUOTA_EXHAUSTED'||reason==='RESERVED_DAILY_MAINTENANCE_CAPACITY'?tomorrow(now):add(now,reason==='BDL_COOLDOWN'?Math.ceil(cooldown/1000)+1:60);finish(job,next,'deferred',JSON.parse(job.body),reason);outcomes.push({job:job.id,state:'deferred',reason});continue;}
       }
-      store.db.prepare("UPDATE research_jobs SET state='running',attempts=attempts+1 WHERE id=?").run(job.id);
+      processed++;options.reliability?.onJob?.(job);store.db.prepare("UPDATE research_jobs SET state='running',attempts=attempts+1 WHERE id=?").run(job.id);
       try{
         const body=JSON.parse(job.body) as {cursor?:number;seen?:number[];scope?:{from:string;to:string};epoch?:string;pregame?:{event:Event;window:number}};
         if(['fixtures','roster','injuries'].includes(job.kind)){
@@ -135,6 +140,8 @@ export async function liveOnce(store:Store,config:Config,options:{dryRun?:boolea
           const interval=job.kind==='fixtures'?config.research.fixtureHours:job.kind==='roster'?config.research.rosterHours:config.research.injuryHours;
           if(cursor!==undefined){store.set(`live:source-progress:${job.kind}`,{cursor,seen:[...(expiredScope?[]:body.seen??[]),cursor],scope});finish(job,add(now,config.providers.balldontlie.minIntervalSeconds+1),'queued',body.pregame?{pregame:body.pregame}:{});}
           else{store.set(`live:source-progress:${job.kind}`,null);store.set(`live:${job.kind}-complete`,{at:page.receipt.retrievedAt,source:page.receipt});finish(job,body.pregame?now:nextRoutineAt(add(now,interval*3600)),body.pregame?'complete':'queued',body.pregame?{pregame:body.pregame}:{});}
+        }else if(job.kind==='finals'&&options.reliability?.finalStep){
+          const result=await options.reliability.finalStep(http,now);finish(job,result.nextAt,'queued',body,result.reason);
         }else if(job.kind==='finals'){
           const scope=body.scope??{from:add(now,-2*86400).slice(0,10),to:now.slice(0,10)},season=Number(scope.to.slice(0,4))-(Number(scope.to.slice(5,7))<7?1:0),epoch=body.epoch??`${now.slice(0,10)}:${Math.floor(Number(now.slice(11,13))/6)}`;
           const result=await bdl.maintenanceStats(season,scope.from,scope.to,now,epoch);finish(job,result.complete?add(now,6*3600):add(now,config.providers.balldontlie.minIntervalSeconds+1),'queued',result.complete?{}:{scope,epoch});
@@ -155,6 +162,8 @@ export async function liveOnce(store:Store,config:Config,options:{dryRun?:boolea
           }
           const result=freezeConditionalShadow(store,current.event,current.source,conditionalPlayers,models,now,config.research.maxCandidatesPerFixture,config.operatingMode==='shadow',clock);counts.playersExamined+=result.examined;counts.predictionsGenerated+=result.generated;counts.forecastsFrozen+=result.inserted;counts.missingAvailability+=conditionalPlayers.slice(0,result.examined).filter(p=>p.injuryStatus?.toLowerCase()!=='out').length;counts.playersExcluded+=new Set(result.exclusions.map(e=>e.playerId)).size;comparisons.push(...result.disagreement);for(const e of result.exclusions)outcomes.push({job:e.playerId,state:'blocked',reason:e.reason});
           finish(job,now,'complete',request);
+        }else if((job.kind==='score'||job.kind==='monitor')&&options.reliability){
+          finish(job,add(now,60),'deferred',body,'ANALYTICS_DELEGATED');
         }else if(job.kind==='score'||job.kind==='monitor'){
           // Stopping new suggestions must never remove existing issues from
           // automatic grading or their independent forecast evaluation.
@@ -172,7 +181,7 @@ export async function liveOnce(store:Store,config:Config,options:{dryRun?:boolea
         finish(job,add(now,job.deadline?60:3600),'deferred',JSON.parse(job.body),reason);outcomes.push({job:job.id,state:'failed',reason});
       }
     }
-    const sourceEvidenceMissing=!store.get('live:fixtures-complete')||!store.get('live:roster-complete');
+    options.reliability?.assertOwner();const sourceEvidenceMissing=!store.get('live:fixtures-complete')||!store.get('live:roster-complete');
     const state=options.signal?.aborted?'interrupted':outcomes.some(o=>o.state==='failed')?'partial':outcomes.some(o=>o.state==='deferred')||sourceEvidenceMissing?'deferred':outcomes.length?'completed':'waiting',id=randomUUID();
     const run={id,at:clock(),startedAt:at,mode:config.operatingMode,manual:!!options.manual,state,...counts,networkRequests:total()-before,outcomes,comparisons,sourceHashes:sources,marketStatus:'MARKET_DATA_NOT_AUTHORISED',qualifiedOpportunities:0,qualifiedAlertsEnabled:false};
     store.db.prepare('INSERT INTO research_runs VALUES (?,?,?)').run(id,run.at,JSON.stringify(run));store.set('live:last-run',run);

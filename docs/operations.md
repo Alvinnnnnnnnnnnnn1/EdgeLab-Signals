@@ -115,3 +115,7 @@ No V6 service has been stopped, unloaded, modified or reconfigured by this rebui
 V1.1 source access and model work are documented in [v11-model-evaluation.md](v11-model-evaluation.md). Use `npm run research -- audit` for the genuine-data audit; `research import-bdl` accepts actual permitted raw exports; `snapshot`, `benchmark` and `certify` freeze source inputs and chronological artifacts. See [provider findings](v11-data-provider-findings.md) for the raw-page contract and remaining access gates.
 
 Legacy `signals evaluate` remains a V1 exploratory/synthetic compatibility command. Its old eligibility checkpoint cannot qualify genuine V1.1 alerts. Synthetic and retrospective-only results never activate. An ineligible V1.1 certificate can collect frozen research screenings; only passed statistical and later prospective gates can make it eligible. Existing private configuration is not changed by research commands.
+
+## V1.4.5 research reliability
+
+V1.4.5 operational extension: `npm run reliability -- health` provides a read-only Terminal report without provider/account requests or messages. It distinguishes the legacy worker from the prepared reliable controller and reports leases, source/deadline work, grading and analytics. See [v145-worker-reliability.md](v145-worker-reliability.md) for evidence, benchmarks, tests and exact research-only deployment/rollback commands. Activation requires separate explicit owner approval; Sportsbet remains independently running.
