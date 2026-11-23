@@ -1,5 +1,8 @@
 # Local operating guide
 
+V1.4.6: [advanced forecasting audit, experimental challengers, Research/Watch preview and activation boundaries](v146-advanced-forecasting.md). Live workers, original models and recommendation policy remain unchanged; the compact formatter is prepared only.
+
+
 V1.4.4: [independent research intelligence, source feasibility and challenger readiness](v144-research-intelligence.md). The new layer is offline and observational; deployed models, active services, policy, delivery, grading and Bet Log are unchanged. New source acquisition remains disabled.
 
 V1.4.3: [recurring Sportsbet research, automatic A$5 hypothetical results and minimal Bet Log](v143-continuous-research.md). A new bounded recurring policy replaces the expired one-hour grant. The market worker runs separately from the unchanged SHADOW service; full V6 allocation and reserve remain protected. Earlier release statements below are historical snapshots.
