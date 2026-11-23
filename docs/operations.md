@@ -1,5 +1,7 @@
 # Local operating guide
 
+V1.4.7: [targeted hybrid forecasting, independent comparison supervision and controlled activation](v147-production-hybrid.md). Consult the private deployment record for actual active releases and coverage; prepared code alone is not activation evidence.
+
 V1.4.6.1: [model hardening, independent prospective journal and simple issued-only website](v1461-research-hardening.md). Watch route/preview retired; all backend evidence retained. Models, policies, formatter and new scheduling remain unactivated.
 
 V1.4.6: [advanced forecasting audit, experimental challengers, Research/Watch preview and activation boundaries](v146-advanced-forecasting.md). Live workers, original models and recommendation policy remain unchanged; the compact formatter is prepared only.

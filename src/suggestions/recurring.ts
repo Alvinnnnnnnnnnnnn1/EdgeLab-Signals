@@ -1,4 +1,4 @@
-import {productionForecasts} from '../production/router';
+import {marketForecasts} from '../production/router';
 import {Store} from '../core/store';
 import {hash,ms,nowISO,type Event,type Receipt,type Terms} from '../core/domain';
 import type {Config} from '../core/config';
@@ -65,7 +65,7 @@ export async function recurringCycle(store:Store,config:Config,policyPath:string
     if(window.quiet){body.retryAt=window.nextAt;setJob(store,selected,ms(window.nextAt)>=ms(selected.deadline)?'expired':'deferred',body,'MELBOURNE_QUIET_HOURS');return Object.assign(result,{state:'quiet_hours'});}
     fixtureProof(store,current.event,current.source,at);const terms=termsEvidence(store,at);
     if(!experimentalForecasts(store,[body.event.id]).some(f=>hash(f.event)===hash(body.event))){const f=generateExperimentalForecasts(store,body.event.id,at,clock);result.forecasts=f;if(!f.inserted&&!f.existing)throw new Error('INSUFFICIENT_PLAYER_FORECAST_EVIDENCE');}
-    const candidates=productionForecasts(store,at,[body.event.id]).filter(f=>hash(f.event)===hash(body.event)&&f.n>=10&&f.currentSeasonGames>=5&&f.expectedMinutes>=18&&f.minutesSD<=6&&!f.teamChanged);
+    const candidates=marketForecasts(store,at,[body.event.id]).filter(f=>hash(f.event)===hash(body.event)&&f.n>=10&&f.currentSeasonGames>=5&&f.expectedMinutes>=18&&f.minutesSD<=6&&!f.teamChanged);
     if(!candidates.some(f=>{try{currentPlayerEvidence(store,f,at);return true;}catch{return false;}}))throw new Error('INSUFFICIENT_CURRENT_PLAYER_EVIDENCE');
     const finishObservation=(receipt:Receipt,raw:unknown)=>{
       const registry=buildSportsbetRegistry(store,raw as Parameters<typeof buildSportsbetRegistry>[1],body.event.id,body.discovery!,clock()),normalized=normalizeOdds(raw,receipt,registry,terms,'sportsbet',true);

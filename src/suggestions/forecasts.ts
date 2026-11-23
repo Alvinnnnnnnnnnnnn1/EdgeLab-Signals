@@ -10,7 +10,7 @@ import {calibrateCDF} from '../research/calibration';
 
 export const SUGGESTION_POLICY='nba-experimental/1.4.2';
 export interface ExperimentalForecast {
-  id:string;at:string;event:Event;playerId:string;player:string;teamId:string;prop:Prop;policy:string;model:string;artifactHash:string;
+  id:string;at:string;event:Event;playerId:string;player:string;teamId:string;prop:Prop;policy:string;model:string;artifactHash:string;modelVersion?:string;routingVersion?:string;
   distribution:number[];baseline:number[];challenger:number[];stress:number[][];n:number;currentSeasonGames:number;lastGameAt:string;expectedMinutes:number;minutesSD:number;teamChanged:boolean;
   participationProbability:null;conditionalOnParticipating:true;validated:false;
   inputs:{fixtureSource:Receipt;rosterSource:Receipt;artifact:unknown;featureNames:string[];features:number[];inputRefs:string[];cutoff:string};inputHash:string;

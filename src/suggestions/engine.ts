@@ -1,4 +1,4 @@
-import {productionForecasts} from '../production/router';
+import {marketForecasts} from '../production/router';
 import {randomUUID} from 'node:crypto';
 import {Store,type Outcome} from '../core/store';
 import {compactExistingBatch} from './compact-message';
@@ -41,7 +41,7 @@ export function assessSuggestion(q:Quote,paired:Quote,f:ExperimentalForecast,ter
 export function rankAndIssue(store:Store,config:Config,quotes:Quote[],terms:Terms[],at:string,clock=()=>at){
   ensureSuggestionFamilies(store);
   archivePricedCandidates(store,quotes,at);
-  const forecasts=productionForecasts(store,at,[...new Set(quotes.map(q=>q.event.id))]),eligible:{quote:Quote;forecast:ExperimentalForecast;terms:Terms;assessment:ReturnType<typeof assessSuggestion>}[]=[],excluded:{playerId:string;prop:Prop;reason:string}[]=[];
+  const forecasts=marketForecasts(store,at,[...new Set(quotes.map(q=>q.event.id))]),eligible:{quote:Quote;forecast:ExperimentalForecast;terms:Terms;assessment:ReturnType<typeof assessSuggestion>}[]=[],excluded:{playerId:string;prop:Prop;reason:string}[]=[];
   for(const q of quotes){try{
     const matches=forecasts.filter(f=>hash(f.event)===hash(q.event)&&f.playerId===q.playerId&&f.prop===q.prop);if(matches.length!==1)throw new Error('Exact frozen experimental forecast missing/ambiguous');const f=matches[0];
     const pair=quotes.filter(p=>hash(p.event)===hash(q.event)&&p.playerId===q.playerId&&p.teamId===q.teamId&&p.prop===q.prop&&p.line===q.line&&p.bookmaker===q.bookmaker&&p.termsId===q.termsId&&p.side!==q.side);if(pair.length!==1)throw new Error('Exact opposite-side market missing/ambiguous');
@@ -60,7 +60,7 @@ export function rankAndIssue(store:Store,config:Config,quotes:Quote[],terms:Term
   return{at,pricedCandidates:quotes.length,eligible:eligible.length,issued:issued.length,ids:issued.map(s=>s.id),permanentlySuppressed,excluded};
 }
 export function archivePricedCandidates(store:Store,quotes:Quote[],at:string){
-  const forecasts=productionForecasts(store,at,[...new Set(quotes.map(q=>q.event.id))]);let inserted=0;
+  const forecasts=marketForecasts(store,at,[...new Set(quotes.map(q=>q.event.id))]);let inserted=0;
   for(const raw of quotes){const q=quoteSchema.parse(raw);retained(store,q.source,at);if(ms(at)>=ms(q.event.startsAt)||ms(q.retrievedAt)>=ms(q.event.startsAt)||ms(q.quotedAt)>=ms(q.event.startsAt))continue;
     const matches=forecasts.filter(f=>hash(f.event)===hash(q.event)&&f.playerId===q.playerId&&f.teamId===q.teamId&&f.prop===q.prop&&ms(f.at)<=ms(at)&&f.inputHash===hash(f.inputs)),f=matches.length===1?matches[0]:null,id=hash(['observed-pregame-candidate',q,f?.id??null]);
     const record={id,at,sourceObservedAt:q.retrievedAt,kind:'observed-pregame-candidate',quote:q,forecastId:f?.id??null,forecastArtifact:f?.inputs.artifact??null,probability:f?probabilities(f.distribution,q.line,q.side):null,baseline:f?probabilities(f.baseline,q.line,q.side):null,challenger:f?probabilities(f.challenger,q.line,q.side):null,recommendationIndependent:true};

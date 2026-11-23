@@ -34,6 +34,7 @@ export function metricIntervals(a:ScoredPrediction[],b:ScoredPrediction[],lines:
  if(!a.length||a.length!==b.length||a.some((r,i)=>r.id!==b[i].id))throw new Error('EXACT_PAIRED_CASES_REQUIRED');
  const names=['crps','nll','absoluteError','covered80','width80','brier','logLoss'] as const,groups=new Map<string,number[][]>();
  a.forEach((r,i)=>{const x=scoreOne(r.pmf,r.y,lines),y=scoreOne(b[i].pmf,b[i].y,lines),g=groups.get(r[cluster])??[];g.push(names.map(k=>x[k]-y[k]));groups.set(r[cluster],g);});
+ if(groups.size<2)return{cluster,clusters:groups.size,draws:0,seed:1461,interval95:null,exploratory:true,reason:'At least two clusters required; one slate is not independent confirmation'};
  const values=[...groups.values()],random=rng(1461),samples=names.map(()=>[] as number[]);
  for(let i=0;i<300;i++){const selected=Array.from({length:values.length},()=>values[Math.floor(random()*values.length)]).flat();names.forEach((_,j)=>samples[j].push(average(selected.map(r=>r[j]))));}
  return{cluster,clusters:groups.size,draws:300,seed:1461,interval95:Object.fromEntries(names.map((k,j)=>{const s=samples[j].sort((a,b)=>a-b);return[k,[s[7],s[292]]];})),exploratory:true};

@@ -8,12 +8,14 @@ import {EfficientStore,installFence,type Fence} from '../research/reliability/st
 import {Store} from '../core/store';
 import {productionDue} from '../research-advanced/prospective';
 import {HybridJournal,type ComparisonPlan} from './journal';
+import {productionManifest} from './manifest';
 export const COMPARISON_LEASE_SECONDS=150;
 export function verifiedPlan(path:string):ComparisonPlan{
  const plan=JSON.parse(readFileSync(path,'utf8')) as ComparisonPlan;
  const release=resolve(dirname(fileURLToPath(import.meta.url)),'../..');
  if(plan.code.dirty||!/^[a-f0-9]{40}$/.test(plan.code.commit)||!Object.keys(plan.code.files).includes('src/production/journal.ts'))throw new Error('PINNED_COMPARISON_CODE_REQUIRED');
- for(const [file,digest]of Object.entries(plan.code.files)){if(file.startsWith('/')||file.split('/').includes('..')||hash(readFileSync(resolve(release,file),'utf8'))!==digest)throw new Error('PINNED_COMPARISON_CODE_CHANGED');}
+ if(hash(productionManifest(release))!==hash(plan.code.files))throw new Error('PINNED_COMPARISON_CODE_CHANGED');
+ if(resolve(plan.sourcePath)===resolve(plan.journalPath)||!resolve(plan.sourcePath).startsWith(resolve('.local')+'/'))throw new Error('SEPARATE_PRIVATE_SOURCE_REQUIRED');
  return plan;
 }
 export function acquireJournal(j:HybridJournal,at:string){const db=j.journal.db,token=randomUUID();db.exec('BEGIN IMMEDIATE');try{const row=db.prepare("SELECT expires_at FROM leases WHERE name='comparison-worker'").get();if(row&&ms(String(row.expires_at))>ms(at)){db.exec('ROLLBACK');return null;}db.prepare("INSERT INTO leases VALUES ('comparison-worker',?,?) ON CONFLICT(name) DO UPDATE SET token=excluded.token,expires_at=excluded.expires_at").run(token,new Date(ms(at)+COMPARISON_LEASE_SECONDS*1000).toISOString());db.exec('COMMIT');return{name:'comparison-worker',token};}catch(e){db.exec('ROLLBACK');throw e;}}
@@ -27,11 +29,12 @@ export function boundedComparisonChild(planPath:string,owner:Fence,kind:'registe
  const done=new Promise<{ok:boolean;reason:string;result:unknown}>(resolve=>{child.on('message',(m:any)=>{if(m.type==='result'){result=m.result;reason='completed';}else if(m.type==='error')reason=/^[A-Z_]+$/.test(m.reason)?m.reason:'COMPARISON_CHILD_FAILED';});const finish=(ok:boolean)=>{clearTimeout(timer);if(killTimer)clearTimeout(killTimer);resolve({ok,reason,result});};child.once('exit',code=>finish(code===0&&reason==='completed'));child.once('error',()=>finish(false));});
  child.send({planPath,owner,kind},error=>{if(error)cancel('COMPARISON_IPC_FAILED');});return{child,done,cancel};
 }
-export function comparisonHealth(path:string,at=nowISO()){
- if(!existsSync(path))return{state:'not-installed',at};
- const plan=JSON.parse(readFileSync(path,'utf8')) as ComparisonPlan,j=new HybridJournal(plan,nowISO,false);try{const row=j.journal.db.prepare("SELECT value FROM comparison_meta WHERE key='worker'").get(),worker=row?JSON.parse(String(row.value)):null,lease=j.journal.db.prepare("SELECT expires_at FROM leases WHERE name='comparison-worker'").get(),fresh=worker&&ms(at)-ms(worker.at)<30000,valid=lease&&ms(String(lease.expires_at))>ms(at);return{at,state:fresh&&valid?'healthy':'stale',worker,lease,predictions:j.journal.db.prepare('SELECT count(*) n FROM challenger_predictions').get(),ready:j.journal.db.prepare('SELECT prop,count(*) n FROM production_ready GROUP BY prop').all(),latestReport:readMeta(j,'report'),lastTask:readMeta(j,'task')};}finally{j.close();}}
+export {comparisonHealth} from './health';
+
 const readMeta=(j:HybridJournal,key:string)=>{const r=j.journal.db.prepare('SELECT value FROM comparison_meta WHERE key=?').get(key);return r?JSON.parse(String(r.value)):null;};
 export async function runComparisonWorker(planPath:string){
+ for(const key of ['ODDS_API_KEY','BALLDONTLIE_API_KEY','TELEGRAM_BOT_TOKEN','TELEGRAM_CHAT_ID','BLUEBUBBLES_PASSWORD'])if(process.env[key])throw new Error('COMPARISON_CREDENTIALS_FORBIDDEN');
+ globalThis.fetch=async()=>{throw new Error('COMPARISON_NETWORK_FORBIDDEN');};
  const plan=verifiedPlan(planPath),j=new HybridJournal(plan),source=new EfficientStore(plan.sourcePath,true),owner=acquireJournal(j,nowISO());if(!owner){source.close();j.close();throw new Error('COMPARISON_OWNER_ALREADY_RUNNING');}
  let stopping=false,task:ReturnType<typeof boundedComparisonChild>|null=null,lastTick=Date.now(),nextRegister=0,nextReport=0;
  const stop=()=>{stopping=true;task?.cancel('COMPARISON_SHUTDOWN');};process.once('SIGTERM',stop);process.once('SIGINT',stop);
@@ -39,10 +42,10 @@ export async function runComparisonWorker(planPath:string){
   const at=nowISO(),gap=Date.now()-lastTick;lastTick=Date.now();if(gap>30000)task?.cancel('COMPARISON_SLEEP_WAKE_GAP');
   if(!renewJournal(j,owner,at)){task?.cancel('COMPARISON_OWNERSHIP_LOST');throw new Error('COMPARISON_OWNERSHIP_LOST');}
   const due=productionDue(source,at);if(due)task?.cancel('YIELD_TO_PRODUCTION_DEADLINE');
-  j.journal.db.prepare("INSERT INTO comparison_meta VALUES ('worker',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").run(JSON.stringify({at,pid:process.pid,version:'1.4.7',state:task?'working':due?'yielded':'waiting',childPID:task?.child.pid??null,lastGapMs:gap,networkRequests:0,outboundMessages:0}));
+  j.journal.db.prepare("INSERT INTO comparison_meta VALUES ('worker',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").run(JSON.stringify({at,pid:process.pid,version:'1.4.7',commit:plan.code.commit,state:task?'working':due?'yielded':'waiting',childPID:task?.child.pid??null,lastGapMs:gap,networkRequests:0,outboundMessages:0,sourceReadOnly:true,journalOnlyWrites:true}));
   if(!task&&!due){const kind=Date.now()>=nextReport?'report':Date.now()>=nextRegister?'register':null;if(kind){
    task=boundedComparisonChild(planPath,owner,kind);if(kind==='report')nextReport=Date.now()+300000;else nextRegister=Date.now()+15000;
-   const current=task;void current.done.then(result=>{if(task!==current)return;try{if(renewJournal(j,owner,nowISO()))j.journal.db.prepare("INSERT INTO comparison_meta VALUES ('task',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").run(JSON.stringify({at:nowISO(),kind,...result}));}catch{/* Ownership fails closed on the next heartbeat. */}task=null;});
+   const current=task;void current.done.then(result=>{if(task!==current)return;try{if(renewJournal(j,owner,nowISO())){const body=JSON.stringify({at:nowISO(),kind,...result});j.journal.db.prepare("INSERT INTO comparison_meta VALUES ('task',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").run(body);j.journal.db.prepare('INSERT INTO comparison_meta VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').run(`task:${kind}`,body);}}catch{/* Ownership fails closed on the next heartbeat. */}task=null;});
   }}await new Promise(resolve=>setTimeout(resolve,5000));
  }}finally{stopping=true;task?.cancel('COMPARISON_SHUTDOWN');if(task)await task.done;j.journal.db.prepare('DELETE FROM leases WHERE name=? AND token=?').run(owner.name,owner.token);source.close();j.close();}
 }
