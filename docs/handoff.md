@@ -1,5 +1,7 @@
 # Original V1 implementation handoff — 21 November 2026 (Melbourne)
 
+V1.4.6.1: [model hardening, independent prospective journal and simple issued-only website](v1461-research-hardening.md). Watch route/preview retired; all backend evidence retained. Models, policies, formatter and new scheduling remain unactivated.
+
 V1.4.6: [advanced forecasting audit, experimental challengers, Research/Watch preview and activation boundaries](v146-advanced-forecasting.md). Live workers, original models and recommendation policy remain unchanged; the compact formatter is prepared only.
 
 

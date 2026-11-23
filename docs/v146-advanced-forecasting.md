@@ -1,5 +1,7 @@
 # V1.4.6 — advanced forecasting research, prepared only
 
+**Superseded website plan:** [V1.4.6.1](v1461-research-hardening.md) removes Watch and retires its preview. The audit/benchmark results below remain frozen historical evidence; the old Watch activation instructions no longer apply.
+
 Research date: 23 November 2026, Australia/Melbourne. No stronger production model or recommendation policy is established. The new architecture, Watch interface and compact formatter are prepared; neither worker was restarted and nothing was promoted.
 
 ## Protected deployment and frozen evidence

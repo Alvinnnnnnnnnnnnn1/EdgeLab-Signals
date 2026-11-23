@@ -1,0 +1,18 @@
+--- a/src/suggestions/engine.ts
++++ b/src/suggestions/engine.ts
+@@ -1,5 +1,6 @@
+ import {randomUUID} from 'node:crypto';
+ import {Store,type Outcome} from '../core/store';
++import {compactExistingBatch} from './compact-message';
+ import {hash,ms,quoteSchema,termsSchema,quoteFresh,ev,type Quote,type Terms,type Prop,type GameLog} from '../core/domain';
+ import type {Config} from '../core/config';
+ import {probabilities} from '../core/models';
+@@ -67,7 +68,7 @@
+ }
+ const labels={points:'Points',rebounds:'Rebounds',assists:'Assists',threes:'Made threes'};
+ export function suggestionMessage(rows:Suggestion[]){return['EdgeLab Signals — NBA Picks','Experimental models · probabilities conditional on playing',...rows.map(s=>{const q=s.quote;return[`Player: ${q.player}`,`Market: ${q.side.toUpperCase()} ${q.line} ${labels[q.prop]}`,`Sportsbet: ${q.decimalOdds.toFixed(2)}`,`Model probability (if plays): ${(s.win*100).toFixed(1)}%`,`Confidence: ${s.confidence}`,`Reasoning: ${s.reasoning}`,`Game: ${q.event.away} at ${q.event.home} · ${new Intl.DateTimeFormat('en-AU',{timeZone:MELBOURNE,dateStyle:'medium',timeStyle:'short'}).format(new Date(q.event.startsAt))} Melbourne`,`Quote: ${q.quotedAt}`,`Reference: ${s.id}`].join('\n');})].join('\n\n');}
+-function enqueueSuggestionBatch(store:Store,rows:Suggestion[],at:string){const ids=rows.map(s=>s.id),id=hash(['suggestion-batch',ids]);store.db.prepare("INSERT OR IGNORE INTO experimental_outbox(id,at,body,binding,state,next_at) VALUES (?,?,?,?,'pending',?)").run(id,at,JSON.stringify({ids,text:suggestionMessage(rows)}),telegramBinding(),at);store.db.prepare("UPDATE experimental_outbox SET state='pending',next_at=? WHERE id=? AND state='consolidated'").run(at,id);}
++function enqueueSuggestionBatch(store:Store,rows:Suggestion[],at:string){const ids=rows.map(s=>s.id),id=hash(['suggestion-batch',ids]);let text=suggestionMessage(rows);try{text=compactExistingBatch(rows,ids).text;}catch{/* Preserve the original batch if compact text cannot safely fit. */}store.db.prepare("INSERT OR IGNORE INTO experimental_outbox(id,at,body,binding,state,next_at) VALUES (?,?,?,?,'pending',?)").run(id,at,JSON.stringify({ids,text}),telegramBinding(),at);store.db.prepare("UPDATE experimental_outbox SET state='pending',next_at=? WHERE id=? AND state='consolidated'").run(at,id);}
+ export async function dispatchSuggestions(store:Store,config:Config,transport=new Telegram(config,store),clock=()=>new Date().toISOString()){
+   if(!config.liveSuggestionsEnabled||!config.networkEnabled||config.operatingMode==='disabled')return{accepted:0,state:'disabled'};const lease=store.acquire('experimental-delivery',clock(),90);if(!lease)return{accepted:0,state:'busy'};let accepted=0;
+   try{ensureSuggestionFamilies(store);store.db.prepare("UPDATE experimental_outbox SET state='uncertain',error='Interrupted submission; no blind resend' WHERE state='sending'").run();
