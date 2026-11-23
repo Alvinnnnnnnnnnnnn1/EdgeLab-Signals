@@ -29,6 +29,8 @@ Exploratory date-cluster bootstrap candidate minus EWA: CRPS 95% interval −0.0
 
 ## Immutable future artifacts and routing
 
+The real Mac subprocess rehearsal found a pre-existing metadata bug: the final-game collector retains `/games/:id` as a single `data` object, but `researchRows()` assumed every receipt contained an array. This prevented inference after new final statistics were ingested. The reader now handles both retained shapes, treats unsupported payloads as unavailable metadata and preserves all original bytes, clocks and normalized log rows. A regression covers single-game Cup classification and unsupported payloads.
+
 V1.4.7 freezes already-known fitted weights and the selected raw quarter-weight assists recipe with the actual publication clock, complete retained-data references, original model identities and pinned forecasting code. The fitting/selection dataset includes retrospectively acquired history; publishing it now does not make that information available before historical games. It can legitimately support future games after actual publication. The protocol records external frozen development parameters, rather than claiming a new strict historical refit.
 
 `productionCode()` and `verifiedPlan()` use the same complete source/runtime manifest. A plan generated with the old research-only manifest is rejected. Every source, worker, inference, routing, scoring, settlement and runtime package file is covered. Source changes or omitted entries fail verification. Source and journal paths must differ; the comparison source handle is physically read-only. Provider credentials are rejected in the supervisor and stripped from children; fetch is disabled. No provider or transport method is called.
