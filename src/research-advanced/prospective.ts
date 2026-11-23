@@ -18,7 +18,7 @@ import {metricIntervals,HARDENING_VERSION} from './hardening';
 
 const codeFiles=['src/research-advanced/prospective.ts','src/research-advanced/models.ts','src/research-advanced/hardening.ts','src/research/features.ts','src/research/models.ts','src/research/distributions.ts','src/research/calibration.ts','src/research/scoring.ts','src/core/domain.ts','src/core/models.ts'];
 export function challengerCode(){return{commit:execFileSync('git',['rev-parse','HEAD'],{encoding:'utf8'}).trim(),dirty:!!execFileSync('git',['status','--porcelain'],{encoding:'utf8'}).trim(),files:Object.fromEntries(codeFiles.map(p=>[p,hash(readFileSync(p,'utf8'))]))};}
-export interface ChallengerParameters {minutes:MinuteModel;conditionalExcess:number;attemptExcess?:number;calibration:Calibration;algorithm:'minutes-hierarchical-nb'|'minutes-integrated-attempts';}
+export interface ChallengerParameters {minutes:MinuteModel;conditionalExcess:number;attemptExcess?:number;blendWeight?:number;calibration:Calibration;algorithm:'minutes-hierarchical-nb'|'minutes-integrated-attempts'|'hybrid-quantile-ewa'|'original-production';}
 interface Artifact {id:string;at:string;trainingCutoff:string;prop:Prop;parameters:ChallengerParameters;trainingRefs:{id:string;bodyHash:string}[];fitProtocol:string;code:ReturnType<typeof challengerCode>;}
 interface Registration {eventId:string;playerId:string;prop:Prop;artifactId:string;marketCandidateId?:string;}
 const json=<T>(v:unknown):T=>JSON.parse(v as string);
@@ -32,7 +32,7 @@ export function productionDue(source:Store,at:string){const horizon=new Date(ms(
 export class ChallengerJournal {
  readonly db:DatabaseSync;
  private loadedCode:ReturnType<typeof challengerCode>|null=null;
- constructor(path:string,private enabled=false,private clock=nowISO,private code=challengerCode,readOnly=false){
+ constructor(path:string,private enabled=false,private clock=nowISO,private code=challengerCode,readOnly=false,existing=false){
   if(readOnly){this.db=new DatabaseSync(path,{readOnly:true});return;}
   if(!enabled){this.db=new DatabaseSync(':memory:');return;}
   this.loadedCode=this.code();
@@ -42,6 +42,7 @@ export class ChallengerJournal {
   }
   this.db=new DatabaseSync(path);if(path!==':memory:')chmodSync(path,0o600);
   if(this.db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name IN ('logs','experimental_suggestions','research_models')").get()){this.db.close();throw new Error('PRODUCTION_DATABASE_FORBIDDEN');}
+  if(existing){this.db.exec('PRAGMA foreign_keys=ON; PRAGMA busy_timeout=100');return;}
   this.db.exec(`PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=100;
    CREATE TABLE IF NOT EXISTS challenger_artifacts(id TEXT PRIMARY KEY,at TEXT NOT NULL,body TEXT NOT NULL);
    CREATE TABLE IF NOT EXISTS challenger_predictions(id TEXT PRIMARY KEY,at TEXT NOT NULL,event_id TEXT NOT NULL,player_id TEXT NOT NULL,prop TEXT NOT NULL,artifact_id TEXT NOT NULL REFERENCES challenger_artifacts(id),body TEXT NOT NULL,UNIQUE(event_id,player_id,prop,artifact_id));
@@ -66,13 +67,14 @@ export class ChallengerJournal {
  }
  publish(source:Store,prop:Prop,trainingCutoff:string,parameters:ChallengerParameters,trainingIds:string[],fitProtocol='external-frozen-parameters'):Artifact{
   this.active();this.sourceSeparate(source);const at=this.clock(),code=this.code();if(hash(code)!==hash(this.loadedCode)||code.dirty||!/^[a-f0-9]{40}$/.test(code.commit)||ms(trainingCutoff)>=ms(at)||!trainingIds.length||trainingIds.length>20000||!finite(parameters))throw new Error('INVALID_FROZEN_ARTIFACT_OR_TRAINING_CLOCK');
-  if(!['points','rebounds','assists','threes'].includes(prop)||!['minutes-hierarchical-nb','minutes-integrated-attempts'].includes(parameters.algorithm)||parameters.conditionalExcess<0||parameters.algorithm==='minutes-integrated-attempts'&&(prop!=='threes'||parameters.attemptExcess===undefined||parameters.attemptExcess<0))throw new Error('INVALID_MODEL_CONTRACT');
+  if(!['points','rebounds','assists','threes'].includes(prop)||!['minutes-hierarchical-nb','minutes-integrated-attempts','hybrid-quantile-ewa','original-production'].includes(parameters.algorithm)||parameters.conditionalExcess<0||parameters.algorithm==='minutes-integrated-attempts'&&(prop!=='threes'||parameters.attemptExcess===undefined||parameters.attemptExcess<0)||parameters.algorithm==='hybrid-quantile-ewa'&&(prop!=='assists'||parameters.blendWeight!==.25||parameters.calibration.method!=='raw'))throw new Error('INVALID_MODEL_CONTRACT');
   const trainingRefs=[...new Set(trainingIds)].sort().map(id=>{const row=source.db.prepare('SELECT body FROM logs WHERE id=?').get(id);if(!row)throw new Error('TRAINING_INPUT_MISSING');const l=json<GameLog>(row.body);if(!l.final||ms(l.observedAt)>ms(trainingCutoff)||ms(l.event.startsAt)>=ms(trainingCutoff))throw new Error('TRAINING_INPUT_AFTER_CUTOFF');for(const s of [l.source,...(l.supportingSources??[])])retained(source,s,trainingCutoff);return{id,bodyHash:hash(row.body)};});
   const body={kind:HARDENING_VERSION,at,trainingCutoff,prop,parameters,trainingRefs,fitProtocol,code,productionEnabled:false},id=hash({kind:body.kind,trainingCutoff,prop,parameters,trainingRefs,fitProtocol,code}),record={...body,id};
   this.db.prepare('INSERT OR IGNORE INTO challenger_artifacts VALUES (?,?,?)').run(id,at,JSON.stringify(record));return json<Artifact>(this.db.prepare('SELECT body FROM challenger_artifacts WHERE id=?').get(id)!.body);
  }
  register(source:Store,request:Registration){
   this.active();this.sourceSeparate(source);const at=this.clock(),artifactRow=this.db.prepare('SELECT body FROM challenger_artifacts WHERE id=?').get(request.artifactId);if(!artifactRow)throw new Error('CHALLENGER_ARTIFACT_MISSING');const artifact=json<Artifact>(artifactRow.body);
+  if(['hybrid-quantile-ewa','original-production'].includes(artifact.parameters.algorithm))throw new Error('USE_MATCHED_HYBRID_REGISTRATION');
   if(artifact.prop!==request.prop||ms(artifact.at)>ms(at)||hash(this.code())!==hash(artifact.code)||artifact.code.dirty)throw new Error('MODEL_CODE_OR_CUTOFF_CHANGED');
   for(const ref of artifact.trainingRefs){const row=source.db.prepare('SELECT body FROM logs WHERE id=?').get(ref.id);if(!row||hash(row.body)!==ref.bodyHash)throw new Error('FROZEN_TRAINING_INPUT_CHANGED');}
   const input=source.get<{event:Event;source:Receipt;status:string}>(`live:fixture:${request.eventId.split(':').at(-1)}`);if(!input||input.status!=='scheduled'||input.event.id!==request.eventId)throw new Error('EXACT_SCHEDULED_FIXTURE_REQUIRED');const event=eventSchema.parse(input.event);

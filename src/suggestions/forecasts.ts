@@ -57,4 +57,8 @@ export function generateExperimentalForecasts(store:Store,eventId:string,at:stri
   }
   return{eventId,playersExamined:players.length,inserted,existing,exclusions};
 }
-export function experimentalForecasts(store:Store){return(store.db.prepare('SELECT body FROM experimental_forecasts ORDER BY at,id').all() as {body:string}[]).map(r=>JSON.parse(r.body) as ExperimentalForecast);}
+export function experimentalForecasts(store:Store,eventIds?:string[]){
+ if(eventIds&&!eventIds.length)return[];
+ const sql=eventIds?`SELECT body FROM experimental_forecasts WHERE event_id IN (${eventIds.map(()=>'?').join(',')}) ORDER BY at,id`:'SELECT body FROM experimental_forecasts ORDER BY at,id';
+ return(store.db.prepare(sql).all(...(eventIds??[])) as {body:string}[]).map(r=>JSON.parse(r.body) as ExperimentalForecast);
+}

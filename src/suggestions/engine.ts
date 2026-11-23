@@ -1,5 +1,7 @@
+import {productionForecasts} from '../production/router';
 import {randomUUID} from 'node:crypto';
 import {Store,type Outcome} from '../core/store';
+import {compactExistingBatch} from './compact-message';
 import {hash,ms,quoteSchema,termsSchema,quoteFresh,ev,type Quote,type Terms,type Prop,type GameLog} from '../core/domain';
 import type {Config} from '../core/config';
 import {probabilities} from '../core/models';
@@ -39,7 +41,7 @@ export function assessSuggestion(q:Quote,paired:Quote,f:ExperimentalForecast,ter
 export function rankAndIssue(store:Store,config:Config,quotes:Quote[],terms:Terms[],at:string,clock=()=>at){
   ensureSuggestionFamilies(store);
   archivePricedCandidates(store,quotes,at);
-  const forecasts=experimentalForecasts(store),eligible:{quote:Quote;forecast:ExperimentalForecast;terms:Terms;assessment:ReturnType<typeof assessSuggestion>}[]=[],excluded:{playerId:string;prop:Prop;reason:string}[]=[];
+  const forecasts=productionForecasts(store,at,[...new Set(quotes.map(q=>q.event.id))]),eligible:{quote:Quote;forecast:ExperimentalForecast;terms:Terms;assessment:ReturnType<typeof assessSuggestion>}[]=[],excluded:{playerId:string;prop:Prop;reason:string}[]=[];
   for(const q of quotes){try{
     const matches=forecasts.filter(f=>hash(f.event)===hash(q.event)&&f.playerId===q.playerId&&f.prop===q.prop);if(matches.length!==1)throw new Error('Exact frozen experimental forecast missing/ambiguous');const f=matches[0];
     const pair=quotes.filter(p=>hash(p.event)===hash(q.event)&&p.playerId===q.playerId&&p.teamId===q.teamId&&p.prop===q.prop&&p.line===q.line&&p.bookmaker===q.bookmaker&&p.termsId===q.termsId&&p.side!==q.side);if(pair.length!==1)throw new Error('Exact opposite-side market missing/ambiguous');
@@ -58,16 +60,16 @@ export function rankAndIssue(store:Store,config:Config,quotes:Quote[],terms:Term
   return{at,pricedCandidates:quotes.length,eligible:eligible.length,issued:issued.length,ids:issued.map(s=>s.id),permanentlySuppressed,excluded};
 }
 export function archivePricedCandidates(store:Store,quotes:Quote[],at:string){
-  const forecasts=experimentalForecasts(store);let inserted=0;
+  const forecasts=productionForecasts(store,at,[...new Set(quotes.map(q=>q.event.id))]);let inserted=0;
   for(const raw of quotes){const q=quoteSchema.parse(raw);retained(store,q.source,at);if(ms(at)>=ms(q.event.startsAt)||ms(q.retrievedAt)>=ms(q.event.startsAt)||ms(q.quotedAt)>=ms(q.event.startsAt))continue;
     const matches=forecasts.filter(f=>hash(f.event)===hash(q.event)&&f.playerId===q.playerId&&f.teamId===q.teamId&&f.prop===q.prop&&ms(f.at)<=ms(at)&&f.inputHash===hash(f.inputs)),f=matches.length===1?matches[0]:null,id=hash(['observed-pregame-candidate',q,f?.id??null]);
-    const record={id,at,sourceObservedAt:q.retrievedAt,kind:'observed-pregame-candidate',quote:q,forecastId:f?.id??null,probability:f?probabilities(f.distribution,q.line,q.side):null,baseline:f?probabilities(f.baseline,q.line,q.side):null,challenger:f?probabilities(f.challenger,q.line,q.side):null,recommendationIndependent:true};
+    const record={id,at,sourceObservedAt:q.retrievedAt,kind:'observed-pregame-candidate',quote:q,forecastId:f?.id??null,forecastArtifact:f?.inputs.artifact??null,probability:f?probabilities(f.distribution,q.line,q.side):null,baseline:f?probabilities(f.baseline,q.line,q.side):null,challenger:f?probabilities(f.challenger,q.line,q.side):null,recommendationIndependent:true};
     inserted+=Number(store.db.prepare('INSERT OR IGNORE INTO experimental_candidates VALUES (?,?,?)').run(id,at,JSON.stringify(record)).changes);
   }return{inserted};
 }
 const labels={points:'Points',rebounds:'Rebounds',assists:'Assists',threes:'Made threes'};
 export function suggestionMessage(rows:Suggestion[]){return['EdgeLab Signals — NBA Picks','Experimental models · probabilities conditional on playing',...rows.map(s=>{const q=s.quote;return[`Player: ${q.player}`,`Market: ${q.side.toUpperCase()} ${q.line} ${labels[q.prop]}`,`Sportsbet: ${q.decimalOdds.toFixed(2)}`,`Model probability (if plays): ${(s.win*100).toFixed(1)}%`,`Confidence: ${s.confidence}`,`Reasoning: ${s.reasoning}`,`Game: ${q.event.away} at ${q.event.home} · ${new Intl.DateTimeFormat('en-AU',{timeZone:MELBOURNE,dateStyle:'medium',timeStyle:'short'}).format(new Date(q.event.startsAt))} Melbourne`,`Quote: ${q.quotedAt}`,`Reference: ${s.id}`].join('\n');})].join('\n\n');}
-function enqueueSuggestionBatch(store:Store,rows:Suggestion[],at:string){const ids=rows.map(s=>s.id),id=hash(['suggestion-batch',ids]);store.db.prepare("INSERT OR IGNORE INTO experimental_outbox(id,at,body,binding,state,next_at) VALUES (?,?,?,?,'pending',?)").run(id,at,JSON.stringify({ids,text:suggestionMessage(rows)}),telegramBinding(),at);store.db.prepare("UPDATE experimental_outbox SET state='pending',next_at=? WHERE id=? AND state='consolidated'").run(at,id);}
+function enqueueSuggestionBatch(store:Store,rows:Suggestion[],at:string){const ids=rows.map(s=>s.id),id=hash(['suggestion-batch',ids]);let text=suggestionMessage(rows);try{text=compactExistingBatch(rows,ids).text;}catch{/* Preserve the original batch if compact text cannot safely fit. */}store.db.prepare("INSERT OR IGNORE INTO experimental_outbox(id,at,body,binding,state,next_at) VALUES (?,?,?,?,'pending',?)").run(id,at,JSON.stringify({ids,text}),telegramBinding(),at);store.db.prepare("UPDATE experimental_outbox SET state='pending',next_at=? WHERE id=? AND state='consolidated'").run(at,id);}
 export async function dispatchSuggestions(store:Store,config:Config,transport=new Telegram(config,store),clock=()=>new Date().toISOString()){
   if(!config.liveSuggestionsEnabled||!config.networkEnabled||config.operatingMode==='disabled')return{accepted:0,state:'disabled'};const lease=store.acquire('experimental-delivery',clock(),90);if(!lease)return{accepted:0,state:'busy'};let accepted=0;
   try{ensureSuggestionFamilies(store);store.db.prepare("UPDATE experimental_outbox SET state='uncertain',error='Interrupted submission; no blind resend' WHERE state='sending'").run();
