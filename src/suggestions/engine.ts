@@ -4,6 +4,7 @@ import {marketMessage} from '../multi-bookmaker/message';
 import {BOOKMAKERS,type Bookmaker} from '../multi-bookmaker/contracts';
 import {assertMultiDelivery,type MultiEvidence} from '../multi-bookmaker/delivery-policy';
 import {marketForecasts} from '../production/router';
+import {assertTrialFreshness} from '../m1-trial/context';
 import {randomUUID} from 'node:crypto';
 import {Store,type Outcome} from '../core/store';
 import {compactExistingBatch} from './compact-message';
@@ -22,6 +23,7 @@ import {ensureSuggestionFamilies,duplicateFamilyDelivery} from './families';
 export interface Suggestion {id:string;at:string;quote:Quote;forecastId:string;forecast:ExperimentalForecast;win:number;push:number;estimatedEV:number;conservativeEV:number;disagreement:number;score:number;reasoning:string;confidence:string;terms:Terms;hypotheticalStakeAUD:5;experimental:true;validated:false;supersedes:string|null;marketComparison?:MultiEvidence;exposurePolicy?:{id:string;hash:string;maxPerFixture:number;maxPerPlayerFixture:number};}
 export function suggestions(store:Store):Suggestion[]{return(store.db.prepare('SELECT body FROM experimental_suggestions ORDER BY at,id').all() as {body:string}[]).map(r=>JSON.parse(r.body));}
 export function currentPlayerEvidence(store:Store,f:ExperimentalForecast,at:string){
+  assertTrialFreshness(store,f,at);
   const current=store.get<{event:Quote['event'];source:Quote['source'];status:string}>(`live:fixture:${f.event.id.split(':').at(-1)}`);
   if(!current||current.status!=='scheduled'||hash(current.event)!==hash(f.event))throw new Error('Fixture changed or canceled');fixtureProof(store,current.event,current.source,at);
   const p=store.get<{playerId:string;teamId:string;observedAt:string;source:Quote['source']}>(`live:roster:${f.playerId.split(':').at(-1)}`);if(!p||p.teamId!==f.teamId)throw new Error('Current roster identity changed');rosterProof(store,p,at);
@@ -78,7 +80,9 @@ export function archivePricedCandidates(store:Store,quotes:Quote[],at:string){
   const forecasts=marketForecasts(store,at,[...new Set(quotes.map(q=>q.event.id))]);let inserted=0;
   for(const raw of quotes){const q=quoteSchema.parse(raw);retained(store,q.source,at);if(ms(at)>=ms(q.event.startsAt)||ms(q.retrievedAt)>=ms(q.event.startsAt)||ms(q.quotedAt)>=ms(q.event.startsAt))continue;
     const matches=forecasts.filter(f=>hash(f.event)===hash(q.event)&&f.playerId===q.playerId&&f.teamId===q.teamId&&f.prop===q.prop&&ms(f.at)<=ms(at)&&f.inputHash===hash(f.inputs)),f=matches.length===1?matches[0]:null,id=hash(['observed-pregame-candidate',q,f?.id??null]);
-    const record={id,at,sourceObservedAt:q.retrievedAt,kind:'observed-pregame-candidate',quote:q,forecastId:f?.id??null,forecastArtifact:f?.inputs.artifact??null,probability:f?probabilities(f.distribution,q.line,q.side):null,baseline:f?probabilities(f.baseline,q.line,q.side):null,challenger:f?probabilities(f.challenger,q.line,q.side):null,recommendationIndependent:true};
+    let trialQualification:undefined|{state:'ELIGIBLE'|'REJECTED';reason:string|null};
+    if(store.get<any>('production:m1-trial')?.enabled){try{if(!f)throw Error('NO_CURRENT_FROZEN_FORECAST');const pair=quotes.filter(p=>hash(p.event)===hash(q.event)&&p.playerId===q.playerId&&p.teamId===q.teamId&&p.prop===q.prop&&p.line===q.line&&p.bookmaker===q.bookmaker&&p.termsId===q.termsId&&p.side!==q.side);if(pair.length!==1)throw Error('EXACT_OPPOSITE_SIDE_MISSING_OR_AMBIGUOUS');const terms=store.get<{terms:Terms[]}>('suggestions:terms')?.terms.filter(t=>t.id===q.termsId);if(terms?.length!==1)throw Error('EXACT_SETTLEMENT_TERMS_MISSING');currentPlayerEvidence(store,f,at);assessBookmakerOffer(q,pair[0],f,terms[0],at);trialQualification={state:'ELIGIBLE',reason:null};}catch(e){trialQualification={state:'REJECTED',reason:(e as Error).message};}}
+    const record={id,at,sourceObservedAt:q.retrievedAt,kind:'observed-pregame-candidate',quote:q,forecastId:f?.id??null,forecastArtifact:f?.inputs.artifact??null,probability:f?probabilities(f.distribution,q.line,q.side):null,baseline:f?probabilities(f.baseline,q.line,q.side):null,challenger:f?probabilities(f.challenger,q.line,q.side):null,recommendationIndependent:true,...(trialQualification?{trialQualification}:{})};
     inserted+=Number(store.db.prepare('INSERT OR IGNORE INTO experimental_candidates VALUES (?,?,?)').run(id,at,JSON.stringify(record)).changes);
   }return{inserted};
 }

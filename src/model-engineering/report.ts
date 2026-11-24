@@ -4,8 +4,8 @@ import { scoreRows, pairedDifference, type ScoredPrediction } from '../research/
 import { thresholds } from '../research/experiment';
 import { summary } from '../research/distributions';
 import { promotionRule } from './journal';
-export function engineeringReport(db: DatabaseSync) {
-  const predictions = db.prepare('SELECT body FROM engineering_predictions ORDER BY registered_at,id').all().map(r => JSON.parse(String(r.body))), first = new Map<string, any>();
+export function engineeringReport(db: DatabaseSync, eventIds?: string[]) {
+  const predictions = db.prepare('SELECT body FROM engineering_predictions ORDER BY registered_at,id').all().map(r => JSON.parse(String(r.body))).filter(p=>!eventIds||eventIds.includes(p.state.event.id)), first = new Map<string, any>();
   const holds: unknown[] = [], groups = new Map<string, { prop: Prop; modelId: string; models: Record<string, ScoredPrediction[]>; market: any[] }>();
   let pending = 0;
   for (const p of predictions) { const { id, bodyHash, ...body } = p; if (hash(body) !== bodyHash) throw Error('PREDICTION_BODY_CHANGED'); const family = hash([p.artifact.id, p.state.event.id, p.state.playerId, p.prop]); if (!first.has(family)) first.set(family, p); }

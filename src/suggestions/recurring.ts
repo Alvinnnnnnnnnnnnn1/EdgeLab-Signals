@@ -60,6 +60,7 @@ export async function recurringCycle(store:Store,config:Config,policyPath:string
       // Initial/ongoing prospective forecasts are independent of market funding.
       const next=upcomingFixtures(store,at).find(f=>ms(f.event.startsAt)-ms(at)<=24*3600000&&!store.get(`suggestions:forecast-complete:${SUGGESTION_POLICY}:${hash(f.event)}`));
       if(next&&researchSchedule(at).activeWindow){try{const f=generateExperimentalForecasts(store,next.event.id,at,clock);store.set(`suggestions:forecast-complete:${SUGGESTION_POLICY}:${hash(next.event)}`,{at:clock(),...f});result.forecasts=f;}catch{result.forecasts='CURRENT_SOURCE_EVIDENCE_REQUIRED';}}
+      if(store.get<any>('production:m1-trial')?.enabled){const first=upcomingFixtures(store,clock())[0];if(first)marketForecasts(store,clock(),[first.event.id]);}
       return result;
     }
     const body=JSON.parse(selected.body) as Body,current=upcomingFixtures(store,at).find(f=>f.event.id===selected!.event_id);

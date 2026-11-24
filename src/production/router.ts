@@ -5,13 +5,15 @@ import {Store} from '../core/store';
 import {experimentalForecasts,fixtureProof,rosterProof,type ExperimentalForecast} from '../suggestions/forecasts';
 import {summary} from '../research/distributions';
 import {gunzipSync} from 'node:zlib';
+import {routeTrial} from '../m1-trial/router';
+import type {TrialMarker} from '../m1-trial/contracts';
 export const ROUTING_VERSION='hybrid-production/1.4.7';
 export interface RoutingPlan {version:typeof ROUTING_VERSION;enabled:boolean;journalPath:string;artifactId:string;routeId:string;artifacts:Record<Prop,string>;}
 export const routingDecisions:Record<Prop,string>={points:'Original selected ensemble / original calibration',rebounds:'Original selected ensemble / raw calibration',assists:'Experimental 25% repaired quantile minutes/NB + 75% EWA / raw, otherwise original EWA',threes:'Original season-shrunk / raw calibration'};
 export function privateJournalPath(path:string){return resolve(path).startsWith(resolve('.local')+'/')&&path.endsWith('/challenger.sqlite');}
 export interface RouteDecision {eventId:string;playerId:string;prop:Prop;forecastId:string;route:'advanced-assists'|'original-precomputed'|'original-fallback';reason:string;}
 /** No training, feature construction, network request or journal write here. */
-export function productionRouting(store:Store,at:string,eventIds:string[]){
+export function legacyProductionRouting(store:Store,at:string,eventIds:string[]){
  const original=experimentalForecasts(store,eventIds),plan=store.get<RoutingPlan>('production:router'),decisions:RouteDecision[]=[],checkedManifests=new Set<string>();
  const decision=(f:ExperimentalForecast,route:RouteDecision['route'],reason:string)=>{decisions.push({eventId:f.event.id,playerId:f.playerId,prop:f.prop,forecastId:f.id,route,reason});return f;};
  const fallback=(reason:string)=>original.map(f=>decision(f,'original-fallback',reason));let journal:DatabaseSync|undefined;
@@ -47,6 +49,7 @@ export function productionRouting(store:Store,at:string,eventIds:string[]){
  return{at,version:ROUTING_VERSION,forecasts,decisions,counts:{advancedAssists:decisions.filter(d=>d.route==='advanced-assists').length,originalPrecomputed:decisions.filter(d=>d.route==='original-precomputed').length,originalFallbacks:decisions.filter(d=>d.route==='original-fallback').length,sourceBlocked:decisions.filter(d=>/SOURCE/.test(d.reason)).length,artifactMismatch:decisions.filter(d=>/ARTIFACT|HASH|VERSION/.test(d.reason)).length}};
 }
 export function productionForecasts(store:Store,at:string,eventIds:string[]){return productionRouting(store,at,eventIds).forecasts;}
+export function productionRouting(store:Store,at:string,eventIds:string[]){const legacy=legacyProductionRouting(store,at,eventIds),marker=store.get<TrialMarker>('production:m1-trial');return marker?.enabled?routeTrial(store,at,eventIds,legacy.forecasts,marker):legacy;}
 /** Called only by the market writer; counts describe the latest actual lookup,
  * not unique issues or invented successful advanced activations. */
-export function marketForecasts(store:Store,at:string,eventIds:string[]){const r=productionRouting(store,at,eventIds);if(store.get<RoutingPlan>('production:router')?.enabled)store.set('production:routing-latest',{at:r.at,version:r.version,counts:r.counts,decisions:r.decisions});return r.forecasts;}
+export function marketForecasts(store:Store,at:string,eventIds:string[]){const r=productionRouting(store,at,eventIds);if(store.get<RoutingPlan>('production:router')?.enabled||store.get<TrialMarker>('production:m1-trial')?.enabled)store.set('production:routing-latest',{at:r.at,version:r.version,counts:r.counts,decisions:r.decisions});return r.forecasts;}

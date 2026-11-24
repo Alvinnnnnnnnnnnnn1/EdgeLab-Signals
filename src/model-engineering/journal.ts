@@ -29,6 +29,7 @@ export interface ShadowInput {
   controls: Record<string, number[]>;
   freshness: unknown; previousRevisionId: string | null;
   market: { over: Quote; under: Quote } | null;
+  featureAvailability?: 'COMPLETED_FINAL_RECEIPT_AS_OF_GENERATION';
 }
 export function exactNoVig(over: Quote, under: Quote, at: string, retained: (r: Receipt) => boolean) {
   over = quoteSchema.parse(over); under = quoteSchema.parse(under);
@@ -43,7 +44,7 @@ export function verifyCachedQuote(source: Store, quote: Quote, at: string) {
   if (!row || !normalizeOdds(JSON.parse(String(row.body)), quote.source, { events: [quote.mappingProof.event], players: [quote.mappingProof.player] }, [terms], quote.bookmaker, quote.mappingProof.event.clockBridgePolicy === 'unique-team-pair-earliest-clock/1').quotes.some(q => hash(q) === hash(quote))) throw Error('QUOTE_DIFFERS_FROM_ORIGINAL_SOURCE');
 }
 export class EngineeringJournal {
-  readonly db: DatabaseSync;
+  db: DatabaseSync;
   constructor(path: string, private enabled = false, private clock = nowISO) {
     if (!enabled) { this.db = new DatabaseSync(':memory:'); return; }
     if (path !== ':memory:') {
@@ -84,7 +85,8 @@ export class EngineeringJournal {
       const raw = source.db.prepare('SELECT body FROM logs WHERE id=?').get(ref.id);
       if (!raw || hash(String(raw.body)) !== ref.bodyHash || ms(ref.knownAt) >= ms(input.asOf)) throw Error('FEATURE_MANIFEST_CHANGED_OR_FUTURE');
       const l = JSON.parse(String(raw.body)) as GameLog;
-      if (l.source.simulated || l.event.startsAt.slice(0, 10) >= input.asOf.slice(0, 10) || ms(l.observedAt) >= ms(input.asOf) || [l.source, ...(l.supportingSources ?? [])].some(r => ms(r.retrievedAt) >= ms(input.asOf) || !source.hasReceipt(r))) throw Error('INVALID_AS_OF_SOURCE');
+      const invalidGame = input.featureAvailability === 'COMPLETED_FINAL_RECEIPT_AS_OF_GENERATION' ? !l.final || l.event.id === input.state.event.id || ms(l.event.startsAt)>=ms(input.asOf) || !!l.completedAt&&ms(l.completedAt)>=ms(input.asOf) : l.event.startsAt.slice(0,10)>=input.asOf.slice(0,10);
+      if (l.source.simulated || invalidGame || ms(l.observedAt) >= ms(input.asOf) || [l.source, ...(l.supportingSources ?? [])].some(r => ms(r.retrievedAt) >= ms(input.asOf) || !source.hasReceipt(r))) throw Error('INVALID_AS_OF_SOURCE');
     } };
     const currentIdentity = () => {
       const fixture = source.get<{event: PregameState['event'];status: string}>(`live:fixture:${input.state.event.id.split(':').at(-1)}`), roster = source.get<{playerId: string;teamId: string}>(`live:roster:${input.state.playerId.split(':').at(-1)}`);
