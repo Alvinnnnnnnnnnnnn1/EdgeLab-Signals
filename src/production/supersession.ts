@@ -49,9 +49,12 @@ export function inspectUntouchedJob(s: Store, job: Job, captured: Record<string,
   if (!current || current.status !== 'scheduled' || hash(current.event) !== hash(event) || current.source.simulated || ms(current.source.retrievedAt) > ms(at) || !s.hasReceipt(current.source)) throw Error('CANONICAL_FUTURE_FIXTURE_REQUIRED:' + job.id);
   const quotes = Number(s.db.prepare("SELECT count(*) n FROM experimental_candidates WHERE json_extract(body,'$.quote.event.id')=?").get(event.id)!.n), issued = Number(s.db.prepare("SELECT count(*) n FROM experimental_suggestions WHERE json_extract(body,'$.quote.event.id')=?").get(event.id)!.n);
   if (quotes || issued || table(s, 'multi_bookmaker_stages') && s.db.prepare('SELECT job_id FROM multi_bookmaker_stages WHERE job_id=?').get(job.id) || s.get('recurring:uncertain-debit')) throw Error('JOB_PRICE_DELIVERY_OR_SETTLEMENT_DEPENDENCY:' + job.id);
-  const forecasts = s.db.prepare('SELECT id,body FROM experimental_forecasts WHERE event_id=? ORDER BY id').all(event.id);
+  // Bodies are protected by the existing immutable forecast triggers. Capture
+  // identities here without materialising hundreds of MiB inside a writer lock;
+  // the detached/live preservation audit compares complete original bodies.
+  const forecasts = s.db.prepare('SELECT id FROM experimental_forecasts WHERE event_id=? ORDER BY id').all(event.id);
   return { event, bodyHash: hash(job.body), quotes, issued, originalStageNeverStarted: true, reservationsReleased: 0, priorChargesChanged: 0,
-    independentForecasts: { rows: forecasts.length, hash: hash(forecasts), treatment: 'PREEXISTING_INDEPENDENT_FORECASTS_RETAINED_NOT_REPLACED' },
+    independentForecasts: { rows: forecasts.length, identitiesHash: hash(forecasts), bodyProtection: 'EXISTING_IMMUTABLE_FORECAST_TRIGGERS_AND_FULL_BACKUP_DIFF', treatment: 'PREEXISTING_INDEPENDENT_FORECASTS_RETAINED_NOT_REPLACED' },
     executionOwner: 'recurring-market-worker', sourceAndSettlementOwner: 'unchanged independent research worker',
     proof: 'Captured initial event-only body and queued/null-error state; executor persists discovery/requesting/reservationFloor before transport. No quote/issue dependency, no active acquisition/delivery lease.' };
 }
