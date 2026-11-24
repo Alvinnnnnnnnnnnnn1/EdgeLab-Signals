@@ -10,7 +10,7 @@ import { M1_VERSION, predictM1, m1Minutes, sharedMinuteScenarios, type M1Artifac
 function fixture() {
   const store = new Store(':memory:'), d = syntheticData(store), rows = d.logs.map(log => ({ log, metadata: log.research ?? { phase: 'regular' as const, overtimePeriods: 0, threeAttempts: 6, rosterOpportunityVerified: false } }));
   const prior = { rate: .5, priorMinutes: 120, excess: .08, minuteSlope: .001, attemptRate: .2, makeRate: .35 };
-  const body: Omit<M1Artifact, 'id'> = { algorithm: M1_VERSION, seed: 2401, trainingCutoff: '2026-01-01T00:00:00.000Z', trainedAt: DEMO_AT, trainingMode: 'retrospective', trainingOriginHash: hash('TEST-ONLY'), sourceHash: hash('TEST-ONLY code'), featureManifest: ['TEST-ONLY'], trainingDates: ['2025-01-01'], trainingRows: 100,
+  const body: Omit<M1Artifact, 'id'> = { algorithm: M1_VERSION, seed: 2401, trainingCutoff: '2026-01-01T00:00:00.000Z', dataAsOf: DEMO_AT, trainedAt: DEMO_AT, trainingMode: 'retrospective', trainingOriginHash: hash('TEST-ONLY'), sourceHash: hash('TEST-ONLY code'), featureManifest: ['TEST-ONLY'], trainingDates: ['2025-01-01'], trainingRows: 100,
     priors: Object.fromEntries(props.map(p => [p, prior])) as M1Artifact['priors'], roleRates: Object.fromEntries(props.map(p => [p, { low: .2, rotation: .4, high: .6 }])) as M1Artifact['roleRates'], minuteResiduals: { low: [-5, 0, 5], rotation: [-8, 0, 8], high: [-10, 0, 10] } };
   const artifact: M1Artifact = { ...body, id: hash(body) };
   return { store, artifact, get: (prop: typeof props[number]) => features(rows, { ...d.logs[0], event: d.event }, prop, 'as-of')! };

@@ -15,7 +15,7 @@ export function minuteCenter(f: FeatureSet) { const v = minuteVector(f); return 
 export interface TrainingExample { row: RetainedRow; f: FeatureSet; y: number; minutes: number }
 interface RatePrior { rate: number; priorMinutes: number; excess: number; minuteSlope: number; attemptRate: number | null; makeRate: number | null }
 export interface M1Artifact {
-  algorithm: typeof M1_VERSION; seed: 2401; trainingCutoff: string; trainedAt: string;
+  algorithm: typeof M1_VERSION; seed: 2401; trainingCutoff: string; dataAsOf: string; trainedAt: string;
   trainingMode: 'as-of' | 'retrospective'; trainingOriginHash: string; sourceHash: string;
   featureManifest: string[]; trainingDates: string[]; trainingRows: number;
   priors: Record<Prop, RatePrior>; roleRates: Record<Prop, Record<RoleBand, number>>;
@@ -28,11 +28,11 @@ function thin(values: number[], max = 31) {
 }
 /** Fitting consumes only declared training labels and lagged features. The
  * caller must supply disjoint later residual/calibration/selection/test dates. */
-export function fitM1(examples: Record<Prop, TrainingExample[]>, trainingCutoff: string, trainingMode: M1Artifact['trainingMode'], sourceHash: string, trainedAt: string): M1Artifact {
+export function fitM1(examples: Record<Prop, TrainingExample[]>, trainingCutoff: string, trainingMode: M1Artifact['trainingMode'], sourceHash: string, dataAsOf: string, trainedAt = new Date().toISOString()): M1Artifact {
   const dates = [...new Set(props.flatMap(p => examples[p].map(e => e.row.log.event.startsAt.slice(0, 10))))].sort();
   if (dates.length < 8 || props.some(p => examples[p].length < 100)) throw Error('INSUFFICIENT_TRAINING_DATE_BREADTH');
   for (const p of props) for (const e of examples[p]) {
-    if (e.row.log.source.simulated || e.row.log.participated !== true || e.minutes <= 0 || !Number.isInteger(e.y) || e.y < 0 || ms(e.row.log.event.startsAt) >= ms(trainingCutoff) || knownAt(e.row.log) > ms(trainedAt) || trainingMode === 'as-of' && knownAt(e.row.log) > ms(trainingCutoff) || e.f.prop !== p) throw Error('INVALID_TRAINING_LABEL_OR_CUTOFF');
+    if (e.row.log.source.simulated || e.row.log.participated !== true || e.minutes <= 0 || !Number.isInteger(e.y) || e.y < 0 || ms(e.row.log.event.startsAt) >= ms(trainingCutoff) || knownAt(e.row.log) > ms(dataAsOf) || ms(dataAsOf) > ms(trainedAt) || trainingMode === 'as-of' && knownAt(e.row.log) > ms(trainingCutoff) || e.f.prop !== p) throw Error('INVALID_TRAINING_LABEL_OR_CUTOFF');
     if (e.f.history.some(r => r.log.event.startsAt.slice(0, 10) >= e.row.log.event.startsAt.slice(0, 10) || trainingMode === 'as-of' && knownAt(r.log) >= ms(e.f.cutoff))) throw Error('FUTURE_TRAINING_FEATURE');
   }
   const priors = {} as M1Artifact['priors'], roleRates = {} as M1Artifact['roleRates'];
@@ -60,7 +60,7 @@ export function fitM1(examples: Record<Prop, TrainingExample[]>, trainingCutoff:
     const group = minuteData.filter(e => roleBand(e.f.minutes) === b), a = group.length >= 30 ? group : minuteData;
     return [b, thin(a.map(e => e.minutes - minuteCenter(e.f)))];
   })) as M1Artifact['minuteResiduals'];
-  const body: Omit<M1Artifact, 'id'> = { algorithm: M1_VERSION, seed: 2401, trainingCutoff, trainedAt, trainingMode,
+  const body: Omit<M1Artifact, 'id'> = { algorithm: M1_VERSION, seed: 2401, trainingCutoff, dataAsOf, trainedAt, trainingMode,
     trainingOriginHash: hash(props.map(p => examples[p].map(e => ({ ref: e.row.ref, features: hash({ values: e.f.values, history: e.f.history.map(r => hash(r.log)) }) })))), sourceHash,
     featureManifest: ['lagged minutes EWA/last5/last10', 'empirical positive-minute residuals', 'Gamma-Poisson partial pooling', 'historical minute/rate association', 'prior team affiliation only', 'no injury/starter/pace coefficients'],
     trainingDates: dates, trainingRows: examples.points.length, priors, roleRates, minuteResiduals };
