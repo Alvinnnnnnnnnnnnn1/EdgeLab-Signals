@@ -6,6 +6,7 @@ import { features } from '../src/research/features';
 import { hash, props } from '../src/core/domain';
 import { probabilities } from '../src/core/models';
 import { summary } from '../src/research/distributions';
+import { scoreOne } from '../src/research/scoring';
 import { M1_VERSION, predictM1, m1Minutes, minuteVector, sharedMinuteScenarios, type M1Artifact } from '../src/model-engineering/m1';
 function fixture() {
   const store = new Store(':memory:'), d = syntheticData(store), rows = d.logs.map(log => ({ log, metadata: log.research ?? { phase: 'regular' as const, overtimePeriods: 0, threeAttempts: 6, rosterOpportunityVerified: false } }));
@@ -27,14 +28,20 @@ test('M1 is deterministic, integer, conditional on playing, and complements whol
 });
 test('zero-rate and sparse/low-minute/return/trade/high-usage scenario tests are software properties only', () => {
   const d = fixture(); try {
-    const f = d.get('points');
+    const f = d.get('points'), baseline = predictM1(f, d.artifact)!;
     for (const scenario of ['rookie', 'low-bench', 'return', 'trade', 'promotion', 'blowout', 'high-usage', 'overprediction']) {
       const s = structuredClone(f); if (scenario === 'rookie') s.history = s.history.slice(-2);
-      if (scenario === 'trade') s.recentTeamChanged = true;
+      if (scenario === 'trade') s.history.at(-1)!.log.teamId = 'TEST:OBSERVED_PRIOR_TRADE';
       if (scenario === 'low-bench') { s.minutes = 5; s.history.forEach(r => { r.log.minutes = 5; r.log.stats.points = 2; }); }
       if (scenario === 'promotion') s.history.slice(-5).forEach(r => { r.log.minutes = 42; });
       if (scenario === 'return') s.history.at(-1)!.log.minutes = 2;
+      if (scenario === 'blowout') s.history.slice(-2).forEach((r, i) => { r.log.minutes = 4 + i; r.log.stats.points = 1 + i; });
+      if (scenario === 'high-usage' || scenario === 'overprediction') s.history.forEach((r, i) => { r.log.minutes = 35; r.log.stats.points = 40 + i % 8; });
       const p = predictM1(s, d.artifact)!; summary(p.pmf); assert.ok(p.mean >= 0); assert.equal(p.starterProbability, null);
+      if (scenario === 'high-usage') assert.ok(p.mean > baseline.mean);
+      if (scenario === 'promotion') assert.ok(p.minutesMean > baseline.minutesMean);
+      if (scenario === 'blowout') assert.ok(p.minutesPMF.slice(1, 10).reduce((sum, v) => sum + v, 0) > 0);
+      if (scenario === 'overprediction') assert.ok(Number.isFinite(scoreOne(p.pmf, 0, [20.5]).nll));
     }
     const zero = structuredClone(d.artifact), zf = structuredClone(f); zf.history.forEach(r => { r.log.stats.points = 0; }); zero.roleRates.points = { low: 0, rotation: 0, high: 0 }; const { id, ...body } = zero; zero.id = hash(body);
     assert.equal(predictM1(zf, zero)!.pmf[0], 1);
