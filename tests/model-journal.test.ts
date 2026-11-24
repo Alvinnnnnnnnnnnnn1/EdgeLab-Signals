@@ -7,6 +7,7 @@ import { EngineeringJournal, exactNoVig, verifyCachedQuote, type ShadowInput } f
 import { pregameEvidence } from '../src/model-engineering/evidence';
 import { M1_VERSION, predictM1, type M1Artifact } from '../src/model-engineering/m1';
 import { cachedShadowCycle } from '../src/model-engineering/shadow';
+import { engineeringReport } from '../src/model-engineering/report';
 function setup() {
   const d = fixture(), prior = { rate: .5, priorMinutes: 120, excess: .1, minuteSlope: 0, attemptRate: .2, makeRate: .35 };
   const body: Omit<M1Artifact, 'id'> = { algorithm: M1_VERSION, seed: 2401, trainingCutoff: '2026-10-01T00:00:00.000Z', dataAsOf: d.at, trainedAt: d.at, trainingMode: 'retrospective', trainingOriginHash: hash('TEST-ONLY training'), sourceHash: hash('TEST-ONLY code'), featureManifest: ['TEST-ONLY isolated'], trainingDates: ['2026-09-01'], trainingRows: 100,
@@ -54,6 +55,17 @@ test('grading appends corrections, does not turn unknown participation or absent
     d.store.ingest([fixed], later); d.journal.grade(d.store); d.journal.grade(d.store);
     assert.equal(d.journal.db.prepare('SELECT count(*) n FROM engineering_grades').get()!.n, 1); assert.equal(JSON.parse(String(d.journal.db.prepare('SELECT body FROM engineering_grades').get()!.body)).actual, 25);
     assert.equal(JSON.parse(String(d.journal.db.prepare('SELECT body FROM engineering_predictions WHERE id=?').get(prediction.id)!.body)).bodyHash, prediction.bodyHash);
+    assert.equal(engineeringReport(d.journal.db).groups.length, 1);
+    const invalidAt = new Date(Date.parse(later) + 60000).toISOString(); d.setAt(invalidAt);
+    d.store.ingest([{ ...fixed, observedAt: invalidAt, stats: { ...fixed.stats, points: null }, source: d.retain({ label: 'TEST-ONLY unavailable correction' }, 'https://test.invalid/final', invalidAt, 'TEST-ONLY') }], invalidAt);
+    d.journal.grade(d.store); const report = engineeringReport(d.journal.db); assert.equal(report.groups.length, 0); assert.equal(report.pending, 1);
+    assert.equal(d.journal.db.prepare('SELECT count(*) n FROM engineering_grades').get()!.n, 1);
+  } finally { d.closeAll(); }
+});
+test('refresh revisions are preserved but do not multiply primary prospective targets', () => {
+  const d = setup(); try {
+    d.journal.register(d.input, d.store); const revisedAt = new Date(Date.parse(d.at) + 1000).toISOString(); d.setAt(revisedAt); d.journal.register({ ...d.input, asOf: revisedAt, featureHash: hash('TEST-ONLY revised evidence') }, d.store);
+    const report = engineeringReport(d.journal.db); assert.equal(report.registrationRevisions, 2); assert.equal(report.distinctModelPlayerGameProps, 1); assert.equal(report.pending, 1);
   } finally { d.closeAll(); }
 });
 test('matched no-vig rejects mismatched line/source/team/clock and retains exact original side prices', () => {

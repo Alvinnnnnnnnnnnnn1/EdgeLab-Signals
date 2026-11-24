@@ -5,13 +5,14 @@ import { latestRows, type RetainedRow } from './data';
 import { exampleFactory, incidentDates } from './experiment';
 import { fitM1, type TrainingExample } from './m1';
 import { engineeringCodeHash } from './code';
+import { validateRetainedSnapshot } from './snapshot';
 
 globalThis.fetch = async () => { throw Error('OFFLINE_TRAINING_ONLY'); };
 const [input, cutoff, output] = process.argv.slice(2);
 if (!input || !cutoff || !output || !output.includes('.local/')) throw Error('Usage: fit-shadow SNAPSHOT CHRONOLOGICAL_CUTOFF NEW_PRIVATE_OUTPUT');
 const snapshot = JSON.parse(readFileSync(input, 'utf8')) as { at: string; originHash: string; rows: RetainedRow[] };
-if (hash(snapshot.rows.map(r => r.ref)) !== snapshot.originHash || ms(cutoff) > ms(snapshot.at)) throw Error('SOURCE_OR_CUTOFF_CHANGED');
-validateRows(snapshot.rows, snapshot.at);
+validateRetainedSnapshot(snapshot);
+if (ms(cutoff) > ms(snapshot.at)) throw Error('SOURCE_OR_CUTOFF_CHANGED');
 const started = performance.now(), latest = latestRows(snapshot.rows, cutoff, 'retrospective').filter(r => r.log.event.league === 'NBA' && !incidentDates.includes(r.log.event.startsAt.slice(0, 10))), make = exampleFactory(snapshot.rows.filter(r => !incidentDates.includes(r.log.event.startsAt.slice(0, 10))), 'retrospective');
 const examples = Object.fromEntries(props.map(p => [p, latest.flatMap(row => { const e = make(row, p); return e ? [e] : []; })])) as Record<Prop, TrainingExample[]>;
 const artifact = fitM1(examples, cutoff, 'retrospective', engineeringCodeHash(), snapshot.at);
