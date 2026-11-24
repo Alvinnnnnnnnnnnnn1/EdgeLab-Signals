@@ -33,7 +33,7 @@ export function generationFeatures(rows:ReturnType<typeof retainedRows>,at:strin
 }
 export class TrialForecaster {
   private epoch=''; private rows:ReturnType<typeof retainedRows>=[]; private get:ReturnType<typeof preparedFeatures>|null=null;
-  private attempted=new Map<string,string>();private cursor='';
+  private attempted=new Map<string,string>();private cursor='';private fixtureHolds=new Map<string,string>();
   constructor(private protocol:TrialProtocol,private model:M1Artifact,private hybrid:any,private journal:EngineeringJournal,private clock=()=>new Date().toISOString()){}
   cycle(s:Store,budgetMs=2000,maxRecords=4){
     const began=performance.now(),at=this.clock();if(!trialIdle(s,at))return{state:'YIELDED_TO_SOURCE_OR_MARKETS',inserted:0,networkRequests:0};
@@ -45,6 +45,10 @@ export class TrialForecaster {
       const rowRefs=new Map(this.rows.map(r=>[r.log,r.ref]));
       const models=s.db.prepare('SELECT body FROM research_models ORDER BY at,id').all().map(r=>JSON.parse(String(r.body))),inferenceStart=performance.now(),contexts=new Map<string,ReturnType<typeof trialContext>>();
       let fixtures=upcomingFixtures(s,at);const imminent=fixtures.filter(f=>ms(f.event.startsAt)-ms(at)<=90*60000);if(imminent.length)fixtures=imminent;
+      // A fixture-level source failure blocks every target in that fixture.
+      // Check once and retain one hold per unchanged evidence fingerprint;
+      // repeated idle ticks must not manufacture millions of identical holds.
+      fixtures=fixtures.filter(fixture=>{try{fixtureProof(s,fixture.event,fixture.source,this.clock());this.fixtureHolds.delete(fixture.event.id);return true;}catch(e){const reason=(e as Error).message,stamp=hash([fixture.event,fixture.source,reason]),target={eventId:fixture.event.id,scope:'ENTIRE_FIXTURE',sourceHash:fixture.source.hash};holds.push({...target,reason});if(this.fixtureHolds.get(fixture.event.id)!==stamp){this.journal.hold(target,reason);this.fixtureHolds.set(fixture.event.id,stamp);}return false;}});
       const targets=fixtures.flatMap(fixture=>s.db.prepare("SELECT value FROM meta WHERE key LIKE 'live:roster:%' AND json_extract(value,'$.teamId') IN (?,?) ORDER BY key").all(fixture.event.homeId,fixture.event.awayId).flatMap(r=>{const player=JSON.parse(String(r.value));return props.map(prop=>({fixture,player,prop,key:hash([fixture.event,player.playerId,prop])}));}));
       const priorIndex=targets.findIndex(t=>t.key===this.cursor),startIndex=priorIndex<0?0:(priorIndex+1)%targets.length;
       const checkedFixtures=new Set<string>();

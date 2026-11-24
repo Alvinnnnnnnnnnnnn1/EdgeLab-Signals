@@ -21,8 +21,8 @@ import { currentPlayerEvidence,archivePricedCandidates } from '../src/suggestion
 import { backup } from 'node:sqlite';
 import { EfficientStore } from '../src/research/reliability/store';
 
-function setup(){
-  const d=fixture(),dir=mkdtempSync(resolve('.local/m1-trial-test-')),path=dir+'/engineering-shadow.sqlite',j=new EngineeringJournal(path,true,d.clock);
+function setup(leadMinutes=60){
+  const d=fixture(undefined,leadMinutes),dir=mkdtempSync(resolve('.local/m1-trial-test-')),path=dir+'/engineering-shadow.sqlite',j=new EngineeringJournal(path,true,d.clock);
   const prior={rate:.5,priorMinutes:120,excess:.1,minuteSlope:0,attemptRate:.2,makeRate:.35};
   const body:Omit<M1Artifact,'id'>={algorithm:M1_VERSION,seed:2401,trainingCutoff:'2026-10-01T00:00:00Z',dataAsOf:d.at,trainedAt:d.at,trainingMode:'retrospective',trainingOriginHash:hash('TEST-ONLY'),sourceHash:hash('TEST-ONLY statistical code'),featureManifest:['TEST-ONLY isolated mock'],trainingDates:['2026-09-01'],trainingRows:100,priors:Object.fromEntries(props.map(p=>[p,prior])) as M1Artifact['priors'],roleRates:Object.fromEntries(props.map(p=>[p,{low:.2,rotation:.5,high:.7}])) as M1Artifact['roleRates'],minuteResiduals:{low:[-5,0,5],rotation:[-3,0,3],high:[-2,0,2]}};
   const model={...body,id:hash(body)},hybrid={id:hash('TEST-ONLY hybrid'),parameters:{algorithm:'hybrid-quantile-ewa',blendWeight:.25,calibration:{method:'raw'},conditionalExcess:.1,minutes:{ridge:{weights:[30,...Array(12).fill(0)]},playerOffsets:{},residuals:[-3,0,3],quantiles:[.1,.25,.5,.75,.9].map((q,i)=>({base:27+i*1.5,q,trees:[]}))}}};
@@ -117,4 +117,13 @@ test('identical relevant facts with later source clocks keep a forecast usable w
 });
 test('verified immutable reference cache is restricted to a physically read-only source and remains cutoff-bound',async()=>{
   const d=setup();let ro:EfficientStore|undefined;try{const path=d.dir+'/source-test-only.sqlite';await backup(d.store.db,path);ro=new EfficientStore(path,true);assert.equal(ro.physicalReadOnly,true);assert.throws(()=>ro!.db.prepare("DELETE FROM logs").run(),/readonly/);const f=new TrialForecaster(d.protocol,d.model,d.hybrid,d.j,d.clock);assert.equal(f.cycle(ro,10000,8).inserted,4);assert.equal(f.cycle(ro,10000,8).inserted,0);}finally{ro?.close();d.closeAll();}
+});
+test('a stale fixture emits one durable hold per evidence revision and recovers after genuine refresh',()=>{
+  const d=setup(1200);try{
+    const at=new Date(Date.parse(d.at)+7*3600000).toISOString();d.setAt(at);
+    for(let i=0;i<3;i++){const r=d.forecaster.cycle(d.store,10000,8);assert.equal(r.inserted,0);assert.equal(r.holds!.length,1);}
+    assert.equal(d.j.db.prepare('SELECT count(*) n FROM engineering_holds').get()!.n,1);
+    const source=d.retain({data:[d.rawGame],meta:{}},'https://api.balldontlie.io/nba/v1/games',at);d.store.set('live:fixture:100',{event:d.event,status:'scheduled',source});
+    assert.equal(d.forecaster.cycle(d.store,10000,8).inserted,4);assert.equal(d.j.db.prepare('SELECT count(*) n FROM engineering_holds').get()!.n,1);
+  }finally{d.closeAll();}
 });
