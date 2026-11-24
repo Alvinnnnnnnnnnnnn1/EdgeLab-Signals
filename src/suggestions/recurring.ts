@@ -1,3 +1,4 @@
+import {runMultiStage,multiClaimed} from '../multi-bookmaker/runtime';
 import {marketForecasts} from '../production/router';
 import {Store} from '../core/store';
 import {hash,ms,nowISO,type Event,type Receipt,type Terms} from '../core/domain';
@@ -42,6 +43,7 @@ export async function recurringCycle(store:Store,config:Config,policyPath:string
     const policy=readRecurringPolicy(policyPath,clock());seedRecurringJobs(store,at,options.earlyFixtureId);
     store.db.prepare("UPDATE recurring_market_jobs SET state='expired',error='Missed original pregame deadline' WHERE deadline<=? AND state NOT IN ('complete','expired')").run(at);
     for(const job of store.db.prepare("SELECT * FROM recurring_market_jobs WHERE state='requesting'").all() as unknown as Job[]){
+      if(multiClaimed(store,job.id)){store.db.prepare("UPDATE recurring_market_jobs SET state='observed' WHERE id=? AND state='requesting'").run(job.id);continue;}
       const b=JSON.parse(job.body) as Body,rows=store.db.prepare("SELECT q.id,q.outcome,o.body FROM quota q LEFT JOIN odds_account_observations o ON o.quota_id=q.id WHERE q.provider='odds' AND q.rowid>? ORDER BY q.rowid LIMIT 2").all(b.reservationFloor??Number.MAX_SAFE_INTEGER) as {id:string;outcome:string;body:string|null}[];
       if(!rows.length){setJob(store,job,'queued',b,'Recovered before transport reservation');continue;}
       const observation=rows.length===1&&rows[0].body?JSON.parse(rows[0].body) as {receiptHash:string|null;endpoint:string}:null;
@@ -63,6 +65,7 @@ export async function recurringCycle(store:Store,config:Config,policyPath:string
     if(ms(selected.deadline)-ms(at)<60000){setJob(store,selected,'expired',body,'Insufficient time for fresh acquisition and delivery');return Object.assign(result,{state:'deadline_expired'});}
     const window=notificationWindow(at,new Date(ms(body.event.startsAt)-120000).toISOString());
     if(window.quiet){body.retryAt=window.nextAt;setJob(store,selected,ms(window.nextAt)>=ms(selected.deadline)?'expired':'deferred',body,'MELBOURNE_QUIET_HOURS');return Object.assign(result,{state:'quiet_hours'});}
+    const multi=await runMultiStage(store,config,policyPath,selected,body.event,lease,{clock,fetcher:options.fetcher});if(multi)return Object.assign(result,multi);
     fixtureProof(store,current.event,current.source,at);const terms=termsEvidence(store,at);
     if(!experimentalForecasts(store,[body.event.id]).some(f=>hash(f.event)===hash(body.event))){const f=generateExperimentalForecasts(store,body.event.id,at,clock);result.forecasts=f;if(!f.inserted&&!f.existing)throw new Error('INSUFFICIENT_PLAYER_FORECAST_EVIDENCE');}
     const candidates=marketForecasts(store,at,[body.event.id]).filter(f=>hash(f.event)===hash(body.event)&&f.n>=10&&f.currentSeasonGames>=5&&f.expectedMinutes>=18&&f.minutesSD<=6&&!f.teamChanged);

@@ -1,0 +1,5 @@
+import type {Suggestion} from '../suggestions/engine';
+import {BOOK_NAMES,type Bookmaker} from './contracts';
+const clean=(s:string)=>s.replace(/[\u0000-\u001f\u007f]/g,' ').replace(/\s+/g,' ').trim();
+const time=(at:string)=>new Intl.DateTimeFormat('en-AU',{timeZone:'Australia/Melbourne',dateStyle:'medium',timeStyle:'short'}).format(new Date(at));
+export function marketMessage(s:Suggestion){const e=s.marketComparison;if(!e)return'';const q=s.quote,until=new Date(Math.min(...[q,e.opposite,...e.alternatives].map(p=>Date.parse(p.expiresAt)))).toISOString();return[`Best bookmaker: ${BOOK_NAMES[q.bookmaker as Bookmaker]}`,`Best odds: @${q.decimalOdds.toFixed(2)}`,`Break-even: ${(100/q.decimalOdds).toFixed(2)}% · Model EV: ${(s.estimatedEV*100).toFixed(2)}%`,...(e.alternatives.length?[`Other verified same-line prices: ${e.alternatives.map(p=>`${BOOK_NAMES[p.bookmaker as Bookmaker]} @${p.decimalOdds.toFixed(2)}`).join(' · ')}`]:[]),`Reason: ${clean(s.reasoning)}`,`Checked: ${time(e.comparisonAt)} Melbourne`,`Valid until: ${time(until)} Melbourne · Odds may change before placement.`].join('\n');}

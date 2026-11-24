@@ -1,0 +1,9 @@
+import {existsSync} from 'node:fs';
+import {Store} from '../core/store';
+import {loadConfig,type Config} from '../core/config';
+import {BOOKMAKERS,BOOK_NAMES} from './contracts';
+export function multiStatus(store:Store,config:Config){
+ const flags=config.multiBookmaker,last=store.get<any>('multi:last-result'),schema=!!store.db.prepare("SELECT name FROM sqlite_master WHERE name='multi_bookmaker_requests'").get(),usage=schema?store.db.prepare("SELECT count(*) requests,coalesce(sum(CASE WHEN o.body IS NULL THEN q.credits ELSE json_extract(o.body,'$.charged') END),0) credits FROM multi_bookmaker_requests r JOIN quota q ON q.id=r.quota_id LEFT JOIN odds_account_observations o ON o.quota_id=q.id").get()??{requests:0,credits:0}:{requests:0,credits:0};
+ return{state:!flags.codeEnabled?'Disabled':flags.paidAcquisitionEnabled&&flags.comparisonEnabled?'Configured; live coverage must be verified':'Ready / dormant',flags,books:BOOKMAKERS.map(key=>({key,name:BOOK_NAMES[key],enabledMarkets:flags.enabledMarkets[key],coverage:last?.availability?.filter((r:any)=>r.bookmaker===key)??null})),lastComparison:last?.at??null,sourceTimestamp:last?.source?.retrievedAt??null,verifiedOffers:last?.availability?.reduce((n:number,r:any)=>n+(r.verifiedQuoteSides??0),0)??0,excluded:last?.excluded??0,selected:last?.selected??0,usage,blockedReason:last?.reason??(!flags.grantFile?'New finite shared allowance not approved':'Future activation and source verification required'),telegram:flags.telegramEnabled?'Configured; dispatch safeguards apply':'Disabled',earliestCycle:'25 November 2026 Melbourne; only a genuinely new unstarted cycle, excluding protected fixture/job identities'};
+}
+export function multiStatusSnapshot(){const c=loadConfig(),path=process.env.EDGELAB_DB??c.database,s=existsSync(path)?new Store(path,true):new Store(':memory:');try{return multiStatus(s,c);}finally{s.close();}}

@@ -31,7 +31,7 @@ test('optional adapters plan only allowlisted books and report genuinely observe
 });
 test('exact fresh two-sided lines produce per-book vig-adjusted disagreements without pooled evidence',()=>{
   const d=fixture(),r=compareBookmakerMarkets(d.quotes(),d.terms,at);assert.equal(r.comparisons.length,1);
-  const c=r.comparisons[0];assert.equal(c.primary.over,.5);assert.equal(c.primary.under,.5);assert.equal(c.benchmarks.length,2);
+  const c=r.comparisons[0];assert.equal(c.primary.over,.5);assert.equal(c.primary.under,.5);assert.equal(c.benchmarks.length,3);
   assert.ok(c.benchmarks.find(b=>b.bookmaker==='tab')!.overDisagreement<0);
   assert.equal(c.pooledProbability,null);assert.equal(c.independentObservations,false);assert.equal(r.qualifiedEligible,false);
 });
@@ -68,7 +68,7 @@ test('retained event catalogue and odds can be reviewed offline with verified id
     store.receipt(d.receipt,body);
     writeFileSync(file,JSON.stringify({label:'licensed_export',licenseReference:'TEST-ONLY mocked permitted source',exportedAt:at,sources:[{receipt:d.source,body:'TEST-ONLY'},{receipt:d.receipt,body}],logs:[],contexts:[],terms:d.terms,registry:d.registry}),{mode:0o600});
     const config=configSchema.parse({evidenceFile:file}),report=reviewMarketReceipt(store,config,hash(d.receipt),at);
-    assert.equal(report.networkRequests,0);assert.equal(report.comparisons.length,1);assert.equal(report.coverage.length,3);assert.equal(report.normalizationExclusions.length,0);
+    assert.equal(report.networkRequests,0);assert.equal(report.comparisons.length,1);assert.equal(report.coverage.length,4);assert.equal(report.normalizationExclusions.length,0);
     const catalogue={...d.receipt,endpoint:d.receipt.endpoint.replace('/odds','/markets')};store.receipt(catalogue,body);
     const observed=reviewMarketReceipt(store,config,hash(catalogue),at);assert.equal(observed.comparisons.length,0);assert.equal(observed.coverage[1].markets[0].state,'recently_seen');
     assert.equal(store.db.prepare('SELECT count(*) AS n FROM quota').get()!.n,0);assert.equal(store.signals().length,0);

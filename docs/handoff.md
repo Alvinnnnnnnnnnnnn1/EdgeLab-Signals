@@ -1,5 +1,7 @@
 # Original V1 implementation handoff — 21 November 2026 (Melbourne)
 
+V1.4.8: [dormant four-bookmaker intelligence and protected-cycle activation](v148-four-bookmaker.md). Prepared in an isolated feature worktree; the current V1.4.7 operating cycle and services remain unchanged. New acquisition/comparison/delivery controls default disabled.
+
 V1.4.7: [targeted hybrid forecasting, independent comparison supervision and controlled activation](v147-production-hybrid.md). Consult the private deployment record for actual active releases and coverage; prepared code alone is not activation evidence.
 
 V1.4.6.1: [model hardening, independent prospective journal and simple issued-only website](v1461-research-hardening.md). Watch route/preview retired; all backend evidence retained. Models, policies, formatter and new scheduling remain unactivated.

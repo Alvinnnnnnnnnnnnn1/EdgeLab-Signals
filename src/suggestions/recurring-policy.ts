@@ -1,3 +1,6 @@
+import {BOOKMAKERS,type CycleJob} from '../multi-bookmaker/contracts';
+import {grantAuthority} from '../multi-bookmaker/policy';
+import type {Event} from '../core/domain';
 import {readFileSync,statSync} from 'node:fs';
 import {z} from 'zod';
 import {hash,ms,type Receipt} from '../core/domain';
@@ -61,11 +64,12 @@ export function recurringPlan(store:Store,p:RecurringPolicy,at:string){const b=r
   maximumFullMarketSnapshotsThisPeriod:Math.floor(b.spendable/4),approximateFullMarketSnapshotsPerDay:b.spendable/4/days,
   primary:'T-20 for breadth',secondary:'T-90 when primary coverage has budget',discovery:'Cached zero-credit NBA events; actual price responses discover offered markets',recommendationLimit:null};}
 
-export function recurringHTTP(store:Store,config:Config,policyPath:string,clock:()=>string,options:{fetcher?:Fetcher;oddsId?:string}={}){
+export function recurringHTTP(store:Store,config:Config,policyPath:string,clock:()=>string,options:{fetcher?:Fetcher;oddsId?:string;multi?:{job:CycleJob;event:Event;owner:string}}={}){
   const p=readRecurringPolicy(policyPath,clock()),original=readFileSync(policyPath,'utf8');let captured:{used:number;remaining:number;charged:number;status:number}|null=null;
   const fetcher:Fetcher=async(input,init)=>{const res=await(options.fetcher??fetch)(input,init),used=Number(res.headers.get('x-requests-used')),remaining=Number(res.headers.get('x-requests-remaining')),charged=Number(res.headers.get('x-requests-last'));
     captured=res.headers.has('x-requests-used')&&res.headers.has('x-requests-remaining')&&res.headers.has('x-requests-last')&&[used,remaining,charged].every(n=>Number.isInteger(n)&&n>=0)?{used,remaining,charged,status:res.status}:null;return res;};
   async function get(path:string,query:Record<string,string>,ttl:number,credits:number,fresh=false){
+    const extension=options.multi?grantAuthority(store,config.multiBookmaker,options.multi.job,options.multi.event,clock(),p,hash(p),true):null;
     captured=null;const at=clock(),before=Number((store.db.prepare("SELECT coalesce(max(rowid),0) AS n FROM quota WHERE provider='odds'").get() as {n:number}).n);
     let budget:ReturnType<typeof recurringBudget>|null=null;
     if(credits)budget=recurringBudget(store,p,at);
@@ -74,11 +78,11 @@ export function recurringHTTP(store:Store,config:Config,policyPath:string,clock:
     const offset=accounting(store,at).offset,scoped:Config={...config,providers:{...config.providers,odds:{...config.providers.odds,enabled:true,reserve:credits?p.reserve+p.v6Credits:0,monthlyCredits:p.planCredits+offset,dailyLimit:Math.min(dayWindow.baseRequests+dayWindow.requests,budget?.dailyRequestLimit??Infinity)}}};
     const http=new JsonHTTP(store,scoped,fetcher,clock,(provider,endpoint,cost,now):RequestAllowance=>{
       const current=readRecurringPolicy(policyPath,now);if(readFileSync(policyPath,'utf8')!==original||provider!=='odds')throw new Error('RECURRING_POLICY_CHANGED');externalAllocation(current,now);
-      const allowed=endpoint==='/v4/sports'&&cost===0||endpoint==='/v4/sports/basketball_nba/events'&&cost===0||!!options.oddsId&&endpoint===`/v4/sports/basketball_nba/events/${options.oddsId}/odds`&&cost===4&&query.bookmakers==='sportsbet'&&query.markets==='player_points,player_rebounds,player_assists,player_threes';
+      const allowed=endpoint==='/v4/sports'&&cost===0||endpoint==='/v4/sports/basketball_nba/events'&&cost===0||!!options.oddsId&&endpoint===`/v4/sports/basketball_nba/events/${options.oddsId}/odds`&&cost===4&&query.bookmakers===(extension?BOOKMAKERS.join(','):'sportsbet')&&query.markets==='player_points,player_rebounds,player_assists,player_threes'||!!extension&&!!options.oddsId&&endpoint===`/v4/sports/basketball_nba/events/${options.oddsId}/markets`&&cost===1&&query.bookmakers===BOOKMAKERS.join(',');
       if(!allowed)throw new Error('RECURRING_REQUEST_OUTSIDE_SCOPE');
       if(cost){const active=store.get<{id:string;binding:string}>('recurring:active-policy');if(!active||active.id!==p.id||active.binding!==hash(p))throw new Error('RECURRING_POLICY_NOT_ACTIVATED');const b=recurringBudget(store,p,now);if(b.dailyRemaining<cost)throw new Error('DAILY_CREDIT_BUDGET_EXHAUSTED');if(b.spendable<cost)throw new Error('PROTECTED_ACCOUNT_BUDGET_EXHAUSTED');if(ms(nextMonth(now))-ms(now)<120000)throw new Error('ACCOUNT_RESET_TRANSITION');}
       const ownOffset=accounting(store,now).rows.reduce((n,r)=>{const o=r.body?JSON.parse(r.body) as Observation:null;return n+(o?.policyId===p.id?r.credits-o.charged:0);},0);
-      return{id:`recurring:${p.id}:${now.slice(0,7)}`,binding:hash(p),expiresAt:ms(p.expiresAt)<ms(nextMonth(now))?p.expiresAt:nextMonth(now),maxRequests:p.monthlyRequests,maxCredits:p.signalsMonthlyCredits+ownOffset,...(cost?{dailyCreditLimit:recurringBudget(store,p,now).dailyCreditLimit}:{})};
+      return{id:`recurring:${p.id}:${now.slice(0,7)}`,binding:hash(p),expiresAt:ms(p.expiresAt)<ms(nextMonth(now))?p.expiresAt:nextMonth(now),maxRequests:p.monthlyRequests,maxCredits:p.signalsMonthlyCredits+ownOffset,...(cost?{dailyCreditLimit:recurringBudget(store,p,now).dailyCreditLimit}:{}),...(extension?{scope:{check:()=>{const m=options.multi!;if(!store.leaseValid('experimental-cycle',m.owner,clock()))throw new Error('MULTI_OWNERSHIP_LOST');const current=grantAuthority(store,config.multiBookmaker,m.job,m.event,clock(),p,hash(p),true);if(hash(current.grant)!==hash(extension.grant))throw new Error('MULTI_GRANT_CHANGED');const usage=store.db.prepare("SELECT count(*) requests,coalesce(sum(CASE WHEN o.body IS NULL THEN q.credits ELSE json_extract(o.body,'$.charged') END),0) credits FROM multi_bookmaker_requests r JOIN quota q ON q.id=r.quota_id LEFT JOIN odds_account_observations o ON o.quota_id=q.id WHERE r.grant_id=?").get(extension.grant.id) as {requests:number;credits:number};if(usage.requests+1>extension.grant.maxRequests||usage.credits+cost>extension.grant.maxCredits)throw new Error('MULTI_FINITE_ALLOWANCE_EXHAUSTED');},record:(quotaId:string)=>{store.db.prepare('INSERT INTO multi_bookmaker_requests VALUES (?,?,?,?)').run(quotaId,extension.grant.id,options.multi!.job.id,now);}}}:{})};
     });
     let result:{body:unknown;receipt:Receipt;cached:boolean}|undefined,error:unknown;
     try{result=await http.get('odds',path,query,ttl,credits,fresh);}catch(e){error=e;}

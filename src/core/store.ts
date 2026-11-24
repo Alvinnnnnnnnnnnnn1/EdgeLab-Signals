@@ -7,7 +7,7 @@ import type { Config } from './config';
 
 export interface Signal { id: string; issuedAt: string; simulated: boolean; supersedes: string | null; decision: Decision; units: 1; }
 export interface Outbox { id: string; signalId: string; state: string; attempts: number; guid: string | null; nextAt: string; lastError: string | null; }
-export interface RequestAllowance {id:string;binding:string;expiresAt:string;maxRequests:number;maxCredits:number;dailyCreditLimit?:number;}
+export interface RequestAllowance {id:string;binding:string;expiresAt:string;maxRequests:number;maxCredits:number;dailyCreditLimit?:number;scope?:{check:()=>void;record:(quotaId:string)=>void};}
 export class Store {
   db: DatabaseSync;
   constructor(path: string, readOnly = false) {
@@ -172,6 +172,7 @@ export class Store {
   }
   reserve(provider: keyof Config['providers'], config: Config['providers'][keyof Config['providers']], credits: number, now: string, allowance?:RequestAllowance) {
     return this.transaction(() => {
+      allowance?.scope?.check();
       if (!config.enabled || config.dailyLimit <= 0) throw new Error(`${provider}: disabled or zero allowance`);
       const day = now.slice(0, 10), month = now.slice(0, 7);
       const totals = this.db.prepare('SELECT COUNT(*) calls,COALESCE(SUM(credits),0) credits,MAX(at) last FROM quota WHERE provider=? AND at LIKE ?').get(provider, `${day}%`) as { calls: number; credits: number; last: string | null };
@@ -192,6 +193,7 @@ export class Store {
       }
       const token = randomUUID();
       this.db.prepare('INSERT INTO quota VALUES (?,?,?,?,?)').run(token, provider, now, credits, 'reserved');
+      allowance?.scope?.record(token);
       // Debit the last observed account allowance locally until a new response updates it.
       if (header && header.at.slice(0, 7) === month) this.set(`quota:${provider}`, { ...header, remaining: header.remaining - credits });
       return token;

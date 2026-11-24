@@ -7,7 +7,7 @@ import { Store } from '../core/store';
 import { loadEvidence } from '../providers/import';
 import type { Config } from '../core/config';
 
-export const researchBooks=['sportsbet','tab','ladbrokes_au'] as const;
+export const researchBooks=['sportsbet','tab','neds','ladbrokes_au'] as const;
 export type ResearchBook=typeof researchBooks[number];
 const bookSchema=z.enum(researchBooks);
 const catalogueSchema=z.object({id:z.string(),sport_key:z.literal('basketball_nba'),commence_time:stamp,home_team:z.string(),away_team:z.string(),bookmakers:z.array(z.object({key:z.string(),markets:z.array(z.object({key:z.string(),last_update:stamp.optional()}))}))});

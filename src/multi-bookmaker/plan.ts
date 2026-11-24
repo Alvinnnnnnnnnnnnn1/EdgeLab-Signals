@@ -1,0 +1,5 @@
+export function acquisitionEstimate(fixtures:number,days=30,discovery=false){
+ if(!Number.isInteger(fixtures)||fixtures<0||!Number.isInteger(days)||days<1||days>31)throw new Error('BOUNDED_ESTIMATE_REQUIRED');
+ const stages=2,creditsPerPrice=4,priceCredits=fixtures*stages*creditsPerPrice,catalogueCredits=discovery?fixtures:0;
+ return{fixturesPerDay:fixtures,days,stages:['T-90','T-20'],bookmakersPerSharedRequest:4,billingRegionEquivalents:1,maximumPriceCreditsPerStage:4,priceRequestsPerDay:fixtures*stages,maximumRequestsPerDayIncludingUncachedAccountAndDiscovery:fixtures*stages*3+(discovery?fixtures:0),maximumCreditsPerDay:priceCredits+catalogueCredits,maximumCreditsPerMonth:(priceCredits+catalogueCredits)*days,optionalCatalogueCreditsPerEvent:discovery?1:0,actualCharges:'Use the authenticated response headers; empty/missing markets never authorise repeated polling',authority:'Estimate only; a new finite allowance and protected-cycle release are mandatory',strategy:'Candidate-first, bounded event list; replace an eligible existing stage request, never add four independent pollers'};
+}
