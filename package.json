@@ -19,7 +19,8 @@
     "audit": "node --env-file-if-exists=.env.local --import tsx src/cli.ts audit",
     "research": "node --env-file-if-exists=.env.local --import tsx src/research/cli.ts",
     "intelligence": "node --max-old-space-size=1024 --import tsx src/research-intelligence/cli.ts",
-    "reliability": "node --env-file-if-exists=.env.local --import tsx src/research/reliability/cli.ts"
+    "reliability": "node --env-file-if-exists=.env.local --import tsx src/research/reliability/cli.ts",
+    "multi": "node --import tsx src/multi-bookmaker/cli.ts"
   },
   "dependencies": {
     "next": "^16.0.0",

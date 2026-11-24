@@ -1,3 +1,4 @@
+import{ensurePlacementGuards,claimPlacedAnnotation}from'./placements';
 import {z} from 'zod';
 import {existsSync} from 'node:fs';
 import {Store,type Outcome} from '../core/store';
@@ -8,7 +9,7 @@ import {suggestions,type Suggestion} from './engine';
 export const annotationSchema=z.object({placed:z.enum(['placed','not_placed']),actualOdds:z.number().gt(1).max(100).nullable(),actualStakeAUD:z.number().positive().max(1000000).nullable()}).strict().refine(v=>v.placed==='placed'||v.actualOdds===null&&v.actualStakeAUD===null,'Actual execution fields require Placed');
 export type Annotation=z.infer<typeof annotationSchema>;
 export interface LedgerRow {id:string;at:string;player:string;event:string;startsAt:string;prop:string;side:string;line:number;odds:number;probability:number;model:string;reasoning:string;confidence:string;result:string|null;actualValue:number|null;hypotheticalStakeAUD:5;hypotheticalProfitAUD:number|null;annotation:Annotation;actualProfitAUD:number|null;delivery:string;quotedAt:string;sourceHash:string;active:boolean;}
-export function annotateSuggestion(store:Store,id:string,raw:unknown,at:string){const input=annotationSchema.parse(raw);if(!/^[a-f0-9]{64}$/.test(id)||!store.db.prepare('SELECT id FROM experimental_suggestions WHERE id=?').get(id))throw new Error('Issued suggestion not found');store.db.prepare('INSERT INTO experimental_annotations(signal_id,at,body) VALUES (?,?,?)').run(id,at,JSON.stringify(input));return input;}
+export function annotateSuggestion(store:Store,id:string,raw:unknown,at:string){const input=annotationSchema.parse(raw);if(!/^[a-f0-9]{64}$/.test(id)||!store.db.prepare('SELECT id FROM experimental_suggestions WHERE id=?').get(id))throw new Error('Issued suggestion not found');ensurePlacementGuards(store);return store.transaction(()=>{const latest=store.db.prepare('SELECT body FROM experimental_annotations WHERE signal_id=? ORDER BY id DESC LIMIT 1').get(id);if(latest&&String(latest.body)===JSON.stringify(input))return input;const row=store.db.prepare('INSERT INTO experimental_annotations(signal_id,at,body) VALUES (?,?,?)').run(id,at,JSON.stringify(input));if(input.placed==='placed')claimPlacedAnnotation(store,row.lastInsertRowid,id,at,input);return input;});}
 export function readLedger(store:Store,config:Config,at=new Date().toISOString()){
   const available=!!store.db.prepare("SELECT name FROM sqlite_master WHERE name='experimental_suggestions'").get();
   const issued=available?suggestions(store):[],grades=new Map<string,Outcome>();if(available)for(const row of store.db.prepare('SELECT body FROM experimental_grades ORDER BY at,rowid').all() as {body:string}[]){const o=JSON.parse(row.body) as Outcome;grades.set(o.signalId,o);}

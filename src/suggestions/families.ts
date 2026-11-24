@@ -1,3 +1,4 @@
+import{ensurePlacementGuards,hasPlacedFamily}from'./placements';
 import {Store} from '../core/store';
 import {hash} from '../core/domain';
 
@@ -27,7 +28,7 @@ export function ensureSuggestionFamilies(store:Store){
     BEGIN SELECT RAISE(ABORT,'Recommendation family claims are permanent'); END;
   `);
  });
- ready.add(store.db);
+ ensurePlacementGuards(store);ready.add(store.db);
 }
 
 /** Called in the same transaction as the outbox sending claim. It also fences
@@ -36,7 +37,7 @@ export function ensureSuggestionFamilies(store:Store){
 export function duplicateFamilyDelivery(store:Store,outboxId:string,ids:string[]){
  if(!ids.length)return true;
  const families:string[]=[];
- for(const id of ids){const row=store.db.prepare('SELECT s.family,c.first_id FROM experimental_suggestions s LEFT JOIN experimental_suggestion_families c ON c.family=s.family WHERE s.id=?').get(id)as{family:string;first_id:string}|undefined;if(!row||row.first_id!==id||families.includes(row.family))return true;families.push(row.family);}
+ for(const id of ids){const row=store.db.prepare('SELECT s.family,c.first_id FROM experimental_suggestions s LEFT JOIN experimental_suggestion_families c ON c.family=s.family WHERE s.id=?').get(id)as{family:string;first_id:string}|undefined;if(!row||row.first_id!==id||families.includes(row.family))return true;if(hasPlacedFamily(store,row.family))return true;families.push(row.family);}
  return!!store.db.prepare(`SELECT o.id FROM experimental_outbox o,json_each(o.body,'$.ids') item
    JOIN experimental_suggestions s ON s.id=item.value
    WHERE o.id<>? AND (o.state IN ('accepted','sending','uncertain') OR o.message_id IS NOT NULL)

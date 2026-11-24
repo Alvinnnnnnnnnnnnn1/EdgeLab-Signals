@@ -1,4 +1,5 @@
-import {runMultiStage,multiClaimed} from '../multi-bookmaker/runtime';
+import{slatePlan}from'../multi-bookmaker/planner';
+import {runMultiStage,multiClaimed,multiTarget} from '../multi-bookmaker/runtime';
 import {marketForecasts} from '../production/router';
 import {Store} from '../core/store';
 import {hash,ms,nowISO,type Event,type Receipt,type Terms} from '../core/domain';
@@ -54,6 +55,7 @@ export async function recurringCycle(store:Store,config:Config,policyPath:string
     }
     const jobs=store.db.prepare("SELECT * FROM recurring_market_jobs WHERE state IN ('queued','deferred','observed') AND due_at<=? AND deadline>? ORDER BY CASE stage WHEN 'T-20' THEN 0 WHEN 'T-90' THEN 1 ELSE 2 END,deadline,id").all(at,at) as unknown as Job[];
     selected=jobs.find(j=>{const b=JSON.parse(j.body) as Body;return!b.retryAt||ms(b.retryAt)<=ms(at);});
+    if(selected&&multiTarget(store,config,selected,JSON.parse(selected.body).event,at)){const marker=store.get<{operatingDate?:string}>('multi:active-release');if(marker?.operatingDate){const plan=slatePlan(store,config,policy,marker.operatingDate,at),next=jobs.find(j=>j.id===plan.next?.jobId);if(next)selected=next;}}
     if(!selected){
       // Initial/ongoing prospective forecasts are independent of market funding.
       const next=upcomingFixtures(store,at).find(f=>ms(f.event.startsAt)-ms(at)<=24*3600000&&!store.get(`suggestions:forecast-complete:${SUGGESTION_POLICY}:${hash(f.event)}`));
@@ -111,11 +113,11 @@ export async function recurringCycle(store:Store,config:Config,policyPath:string
       setJob(store,selected,body.lastPrice||paid?'blocked':'deferred',{...body,retryAt:new Date(ms(clock())+5*60000).toISOString()},'ACQUISITION_OR_PRICE_EVIDENCE_FAILED');throw e;
     }
   }catch(e){const message=e instanceof Error?e.message:'RECURRING_CYCLE_FAILED';result.state='blocked';result.reason=/^[A-Z][A-Z0-9_ ;:-]+$/.test(message)?message:'SOURCE_OR_ACCOUNT_EVIDENCE_REQUIRED';
-    if(selected){const current=store.db.prepare('SELECT body,state FROM recurring_market_jobs WHERE id=?').get(selected.id) as {body:string;state:string};if(!['complete','blocked','expired'].includes(current.state)){const body=JSON.parse(current.body) as Body;body.retryAt=new Date(ms(clock())+5*60000).toISOString();setJob(store,selected,'deferred',body,String(result.reason));}}
+    if(selected&&(!multiClaimed(store,selected.id)||store.leaseValid('experimental-cycle',lease,clock()))){const current=store.db.prepare('SELECT body,state FROM recurring_market_jobs WHERE id=?').get(selected.id) as {body:string;state:string};if(!['complete','blocked','expired'].includes(current.state)){const body=JSON.parse(current.body) as Body;body.retryAt=new Date(ms(clock())+5*60000).toISOString();setJob(store,selected,'deferred',body,String(result.reason));}}
   }finally{
-    try{result.delivery=await dispatchSuggestions(store,config,options.transport??new Telegram(config,store,options.fetcher,clock),clock);}catch{result.delivery={state:'dispatch_error'};}
+    try{result.delivery=selected&&multiClaimed(store,selected.id)&&!store.leaseValid('experimental-cycle',lease,clock())?{state:'ownership_lost'}:await dispatchSuggestions(store,config,options.transport??new Telegram(config,store,options.fetcher,clock),clock);}catch{result.delivery={state:'dispatch_error'};}
     result.at=clock();result.networkRequests=Number((store.db.prepare("SELECT count(*) AS n FROM quota WHERE provider='odds'").get() as {n:number}).n)-before;
-    store.set('recurring:last-run',result);store.release('experimental-cycle',lease);
+    if(!selected||!multiClaimed(store,selected.id)||store.leaseValid('experimental-cycle',lease,clock()))store.set('recurring:last-run',result);store.release('experimental-cycle',lease);
   }
   return result;
 }

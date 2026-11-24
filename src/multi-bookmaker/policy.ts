@@ -12,7 +12,8 @@ export function authorities(config:MultiConfig,at:string){
  return{protection,activation};
 }
 export function cycleGuard(store:Store,config:MultiConfig,job:CycleJob,event:Event,at:string,recovery=false){
- const {protection,activation}=authorities(config,at);eventSchema.parse(event);const release=store.get<{commit:string;protectionHash:string}>('multi:active-release');if(!release||release.commit!==activation.codeCommit||release.protectionHash!==protection.hash)throw new Error('MULTI_REVIEWED_RELEASE_NOT_ACTIVATED');
+ const {protection,activation}=authorities(config,at);eventSchema.parse(event);const release=store.get<{commit:string;protectionHash:string;activationHash:string;eventIds:string[]}>('multi:active-release');if(!release||release.commit!==activation.codeCommit||release.protectionHash!==protection.hash||release.activationHash!==hash(activation)||hash(release.eventIds)!==hash(activation.eventIds))throw new Error('MULTI_REVIEWED_RELEASE_NOT_ACTIVATED');
+ if(!activation.eventIds.includes(event.id)||localParts(event.startsAt).date!==activation.operatingDate)throw new Error('MULTI_OUTSIDE_ACTIVATED_SLATE');
  if(!config.codeEnabled||localParts(at).date<'2026-11-25'||ms(at)<ms(activation.effectiveAt))throw new Error('MULTI_NOT_YET_ELIGIBLE');
  if(protection.fixtureIds.includes(event.id)||protection.jobIds.includes(job.id))throw new Error('MULTI_PROTECTED_FIXTURE_OR_JOB');
  if(event.league!=='NBA'||job.event_id!==event.id||localParts(event.startsAt).date<'2026-11-25'||!['T-90','T-20'].includes(job.stage)||ms(job.due_at)<ms(activation.effectiveAt)||ms(job.due_at)>ms(at)||ms(job.deadline)<=ms(at)||ms(at)>=ms(event.startsAt)-120000)throw new Error('MULTI_EXACT_NEW_STAGE_REQUIRED');
@@ -39,6 +40,7 @@ export function cycleGuard(store:Store,config:MultiConfig,job:CycleJob,event:Eve
 export function grantAuthority(store:Store,config:MultiConfig,job:CycleJob,event:Event,at:string,policy:{id:string},policyBinding:string,recovery=false){
  const ctx=cycleGuard(store,config,job,event,at,recovery);let grant:ReturnType<typeof grantSchema.parse>;try{grant=grantSchema.parse(privateJSON(config.grantFile));}catch{throw new Error('MULTI_FINITE_SHARED_ALLOWANCE_REQUIRED');}
  if(!config.paidAcquisitionEnabled||grant.activationId!==ctx.activation.id||grant.protectionHash!==ctx.protection.hash||grant.policyId!==policy.id||grant.policyBinding!==policyBinding||!process.env.ODDS_API_KEY||grant.apiKeyFingerprint!==hash(process.env.ODDS_API_KEY)||!grant.eventIds.includes(event.id)||ms(grant.approvedAt)>ms(at)||ms(grant.expiresAt)<=ms(at)||ms(grant.expiresAt)-ms(grant.approvedAt)>86400000)throw new Error('MULTI_FINITE_SHARED_ALLOWANCE_REQUIRED');
+ if(!grant.stages.includes(job.stage as 'T-90'|'T-20')||grant.eventIds.some(id=>!ctx.activation.eventIds.includes(id)))throw new Error('MULTI_GRANT_OUTSIDE_ACTIVATED_SLATE');
  const stage=store.db.prepare("SELECT name FROM sqlite_master WHERE name='multi_bookmaker_stages'").get()?store.db.prepare('SELECT body FROM multi_bookmaker_stages WHERE job_id=?').get(job.id):null;if(stage){const frozen=JSON.parse(String(stage.body));if(frozen.grantId!==grant.id||frozen.grantHash!==hash(grant))throw new Error('MULTI_FROZEN_GRANT_CHANGED');}
  return{...ctx,grant};
 }
