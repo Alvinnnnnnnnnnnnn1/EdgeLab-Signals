@@ -1,0 +1,19 @@
+import { readFileSync, writeFileSync } from 'node:fs';
+import { hash, props, ms, type Prop } from '../core/domain';
+import { validateRows } from '../research/dataset';
+import { latestRows, type RetainedRow } from './data';
+import { exampleFactory, incidentDates } from './experiment';
+import { fitM1, type TrainingExample } from './m1';
+import { engineeringCodeHash } from './code';
+
+globalThis.fetch = async () => { throw Error('OFFLINE_TRAINING_ONLY'); };
+const [input, cutoff, output] = process.argv.slice(2);
+if (!input || !cutoff || !output || !output.includes('.local/')) throw Error('Usage: fit-shadow SNAPSHOT CHRONOLOGICAL_CUTOFF NEW_PRIVATE_OUTPUT');
+const snapshot = JSON.parse(readFileSync(input, 'utf8')) as { at: string; originHash: string; rows: RetainedRow[] };
+if (hash(snapshot.rows.map(r => r.ref)) !== snapshot.originHash || ms(cutoff) > ms(snapshot.at)) throw Error('SOURCE_OR_CUTOFF_CHANGED');
+validateRows(snapshot.rows, snapshot.at);
+const started = performance.now(), latest = latestRows(snapshot.rows, cutoff, 'retrospective').filter(r => r.log.event.league === 'NBA' && !incidentDates.includes(r.log.event.startsAt.slice(0, 10))), make = exampleFactory(snapshot.rows.filter(r => !incidentDates.includes(r.log.event.startsAt.slice(0, 10))), 'retrospective');
+const examples = Object.fromEntries(props.map(p => [p, latest.flatMap(row => { const e = make(row, p); return e ? [e] : []; })])) as Record<Prop, TrainingExample[]>;
+const artifact = fitM1(examples, cutoff, 'retrospective', engineeringCodeHash(), snapshot.at);
+writeFileSync(output, JSON.stringify(artifact, null, 2), { flag: 'wx', mode: 0o600 });
+console.log(JSON.stringify({ artifactId: artifact.id, sourceHash: artifact.sourceHash, trainingRows: artifact.trainingRows, dates: artifact.trainingDates.length, cutoff, trainedAt: artifact.trainedAt, datasetAsOf: snapshot.at, lifecycle: 'PREPARED_SHADOW_NOT_REGISTERED', protocol: 'One fixed primary-family refit on available pre-incident labels; prior historical test now training, no new holdout claim; no incident labels; prospective efficacy pending', elapsedMs: performance.now() - started, maxRSSKiB: process.resourceUsage().maxRSS }));
