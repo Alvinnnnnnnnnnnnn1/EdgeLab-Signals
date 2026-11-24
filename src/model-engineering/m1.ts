@@ -60,7 +60,7 @@ export function fitM1(examples: Record<Prop, TrainingExample[]>, trainingCutoff:
     const group = minuteData.filter(e => roleBand(e.f.minutes) === b), a = group.length >= 30 ? group : minuteData;
     return [b, thin(a.map(e => e.minutes - minuteCenter(e.f)))];
   })) as M1Artifact['minuteResiduals'];
-  const body = { algorithm: M1_VERSION, seed: 2401 as const, trainingCutoff, trainedAt, trainingMode,
+  const body: Omit<M1Artifact, 'id'> = { algorithm: M1_VERSION, seed: 2401, trainingCutoff, trainedAt, trainingMode,
     trainingOriginHash: hash(props.map(p => examples[p].map(e => ({ ref: e.row.ref, features: hash({ values: e.f.values, history: e.f.history.map(r => hash(r.log)) }) })))), sourceHash,
     featureManifest: ['lagged minutes EWA/last5/last10', 'empirical positive-minute residuals', 'Gamma-Poisson partial pooling', 'historical minute/rate association', 'prior team affiliation only', 'no injury/starter/pace coefficients'],
     trainingDates: dates, trainingRows: examples.points.length, priors, roleRates, minuteResiduals };
