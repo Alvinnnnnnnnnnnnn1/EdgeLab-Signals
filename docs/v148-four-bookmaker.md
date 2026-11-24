@@ -55,7 +55,7 @@ Register independently reviewed bookmaker settlement evidence in `multi:terms`. 
 
 [The provider's V4 guide](https://the-odds-api.com/liveapi/guides/v4/) groups up to ten requested bookmakers into one billing-region equivalent. For these four books, conservatively reserve up to four credits for a response containing all four requested prop markets. Actual returned-market charging is reconciled from the original response headers; do not assume that adding books is always free when it expands the returned market union.
 
-Two existing stages cost up to **8 credits per fixture**, plus an optional one-credit catalogue call. Account/event discovery calls add bounded request counts even when their credit cost is zero. They count toward the finite allowance. The shared request replaces an eligible original stage request; it does not add four book-specific scans.
+Two existing stages cost up to **8 credits per fixture**, plus an optional one-credit catalogue call. Account/event discovery calls add bounded request counts even when their credit cost is zero. They count toward the finite allowance. The shared request replaces an eligible original stage request; it does not add four book-specific scans. For model-comparison stages, the original history/minutes/current-player source gates run before any provider request. An unavailable or insufficient candidate population therefore cannot consume acquisition credits. A separately authorised coverage-only stage does not run model qualification, ranking or issuance.
 
 | Strategy | Maximum price credits/day | 30-day price credits |
 | --- | ---: | ---: |
@@ -96,7 +96,7 @@ Private execution evidence records before/after historical-row preservation, cur
 
 ## Verification and readiness record
 
-`npm run verify` passed: 325 tests (including 39 four-bookmaker cases), TypeScript and the production Next.js build. The isolated four-bookmaker tests deny unmocked network access. They exercise source/identity/settlement exclusions, incomplete feeds, shared finite quota fencing, response recovery, unchanged probabilities/risk gates, deterministic ranking, one-family issuance, original outbox bodies, quiet hours/DST, expiry and the protected-cycle barrier.
+`npm run verify` passed: 326 tests (including 40 four-bookmaker cases), TypeScript and the production Next.js build. The isolated four-bookmaker tests deny unmocked network access. They exercise source/identity/settlement exclusions, incomplete feeds, shared finite quota fencing, response recovery, unchanged probabilities/risk gates, deterministic ranking, one-family issuance, original outbox bodies, quiet hours/DST, expiry and the protected-cycle barrier.
 
 A temporary loopback production server used a detached copy of the pre-development database and comparison journal, with acquisition/delivery disabled. Bet Log, Performance, System Status and CSV returned successfully; Watch remained 404. Sportsbet-only CSV was byte-identical to the original-code export from the same snapshot. All 13 production dependency traces passed the private-file exclusion check. The temporary server was then stopped; the production website was untouched.
 

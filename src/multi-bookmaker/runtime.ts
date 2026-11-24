@@ -6,7 +6,7 @@ import {marketKeys} from '../providers/odds';
 import {readRecurringPolicy,recurringBudget,recurringHTTP} from '../suggestions/recurring-policy';
 import {fixtureProof,experimentalForecasts,generateExperimentalForecasts,retained} from '../suggestions/forecasts';
 import {marketForecasts} from '../production/router';
-import {issueQualifiedSuggestions,archivePricedCandidates} from '../suggestions/engine';
+import {issueQualifiedSuggestions,archivePricedCandidates,currentPlayerEvidence} from '../suggestions/engine';
 import {BOOKMAKERS,VERSION,type CycleJob} from './contracts';
 import {authorities,cycleGuard,grantAuthority,installMultiSchema} from './policy';
 import {normalizeFourBooks,compareOffers} from './comparison';
@@ -30,6 +30,11 @@ export async function runMultiStage(store:Store,config:Config,policyPath:string,
   fixtureProof(store,event,store.get<any>(`live:fixture:${event.id.split(':').at(-1)}`)?.source,at);
   if(ms(at)>=ms(job.deadline)||ms(at)>=ms(event.startsAt)-120000){p!.phase='blocked';p!.reason='MULTI_DEADLINE_EXPIRED';update(store,job,p!,'expired',owner,clock());return{...summary,reason:p!.reason};}
   if(notificationWindow(at,event.startsAt).quiet)return{...summary,state:'quiet_hours'};
+  if(m.comparisonEnabled){
+   if(!experimentalForecasts(store,[event.id]).some(f=>hash(f.event)===hash(event)))generateExperimentalForecasts(store,event.id,at,clock);
+   const candidates=marketForecasts(store,at,[event.id]).filter(f=>hash(f.event)===hash(event)&&f.n>=10&&f.currentSeasonGames>=5&&f.expectedMinutes>=18&&f.minutesSD<=6&&!f.teamChanged);
+   if(!candidates.some(f=>{try{currentPlayerEvidence(store,f,at);return true;}catch{return false;}}))throw Error('INSUFFICIENT_CURRENT_PLAYER_EVIDENCE');
+  }
   if(p!.phase==='requesting'){
    const r=store.db.prepare("SELECT q.id,q.outcome,o.body FROM multi_bookmaker_requests r JOIN quota q ON q.id=r.quota_id LEFT JOIN odds_account_observations o ON o.quota_id=q.id WHERE r.job_id=? AND q.credits=4 AND q.at>=? ORDER BY q.rowid DESC LIMIT 1").get(job.id,p!.requestStartedAt!);
    if(!r){p!.phase='prices';update(store,job,p!,'queued',owner,clock());}
