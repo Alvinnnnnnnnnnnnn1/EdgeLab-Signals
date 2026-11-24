@@ -1,0 +1,15 @@
+# Model engineering continuation
+
+This branch starts at verified core `f8cac6e`; it does not replace either pinned production cutover. All new statistical paths are offline or separately gated SHADOW. No active weights, qualification policy, grant, source acquisition, transport or protected job changes are authorised by these modules.
+
+Implementation surface: `suggestions/forecasts.ts:generateExperimentalForecasts`, `research/features.ts:preparedFeatures`, `research/inference.ts`, `research-advanced/models.ts:minutesDistribution/minuteMixture`, `core/models.ts:probabilities`, `suggestions/engine.ts`, `research-advanced/prospective.ts:ChallengerJournal`, `research/reliability/worker.ts`, `multi-bookmaker/`, and `production/deployment.ts:protectedCycleSafety/deploymentSafety`. The active journal hybrid is not an independent challenger.
+
+Data proof: `model-engineering/data.ts` verifies retained receipts and retains every original revision. An individual cutoff chooses its latest eligible revision. Unknowns remain null. A historical final fetched in November cannot become an October pregame feature in AS_OF mode. RETROSPECTIVE permits prior-game lag research only and cannot establish original source availability or betting ROI.
+
+Candidates predeclared before new scoring: M1 partial-pooled per-minute rates integrated over empirical minutes scenarios; last5/last10/EWA/season controls; conditional Poisson diagnostic; attempt/make threes only with complete earlier attempt data. M2 modest local boosted minutes only if independent retrospective dates support disjoint training/residual/calibration/selection/test partitions. M3 not pursued without supported installed discrete probabilistic tooling. No dependency installation or source code copying is needed.
+
+Data, experiments, exact source hashes, private result rows and continuation commands live under the repository's ignored `.local/model-engineering/`. No raw data, credentials, licensed provider payloads or private config belongs in a build artifact.
+
+Verified 24 November data snapshot: 17,300 revisions, 16,632 distinct player-games, 551 fixtures, 725 players, 104 UTC dates (22 October 2024–24 November 2026). Positive participation/minutes: 11,508 rows, 550 fixtures, 636 players, 103 dates. Unknown participation: 5,124; no missing minutes. All 11,508 participating rows retain 3PA/3PM/FGA/FGM/FTA/FTM; no starter fields. Receipts span 21–24 November 2026. Only 396 targets over four dates have even one earlier same-player receipt; that is not a training-eligible count. Quote archive: 1,718 sides, 14 fixtures, three dates. Revisions and quote sides are not independent target outcomes.
+
+Node 24.21.0/TypeScript are installed. Python 3.9.6 has no numpy/scipy/sklearn/XGBoost/LightGBM/NGBoost. Use dependency-free TypeScript, including existing small boosted-stump utilities only for retrospective experiments with adequate date splits; M3 is not attempted. True receipt-clock M2 and selected-price calibrators are not trainable honestly on this date breadth.
