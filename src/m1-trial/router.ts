@@ -16,6 +16,7 @@ export function routeTrial(s:Store,at:string,eventIds:string[],legacy:Experiment
   try{
     assertProtocol(marker.protocol);assertFrozenConfiguration(marker.protocol);const a=marker.activation,{id,...abody}=a;
     if(hash(abody)!==id||a.protocolId!==marker.protocol.id||ms(a.activatedAt)>ms(at)||marker.protocol.codeHash!==trialCodeHash(marker.protocol.release))throw Error('TRIAL_ACTIVATION_OR_LOADED_CODE_MISMATCH');
+    const activation=s.db.prepare('SELECT body FROM m1_trial_activations WHERE id=?').get(id);if(!activation||JSON.parse(String(activation.body)).markerHash!==hash(marker))throw Error('IMMUTABLE_TRIAL_ACTIVATION_REQUIRED');
     if(!resolve(marker.journalPath).includes('/.local/')||!marker.journalPath.endsWith('/engineering-shadow.sqlite')||!realpath(marker.journalPath).includes('/.local/'))throw Error('PRIVATE_TRIAL_JOURNAL_REQUIRED');
     j=new DatabaseSync(marker.journalPath,{readOnly:true});j.exec('PRAGMA busy_timeout=50');
     const protocol=j.prepare('SELECT body FROM m1_trial_protocols WHERE id=?').get(marker.protocol.id);if(!protocol||hash(JSON.parse(String(protocol.body)))!==hash(marker.protocol))throw Error('REGISTERED_TRIAL_PROTOCOL_REQUIRED');

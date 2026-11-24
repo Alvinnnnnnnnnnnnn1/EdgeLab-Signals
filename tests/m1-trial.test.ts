@@ -18,6 +18,8 @@ import { trialReview } from '../src/m1-trial/review';
 import { drainTrialRollback } from '../src/m1-trial/rollback';
 import { fenceTrialJournal } from '../src/m1-trial/fence';
 import { currentPlayerEvidence,archivePricedCandidates } from '../src/suggestions/engine';
+import { backup } from 'node:sqlite';
+import { EfficientStore } from '../src/research/reliability/store';
 
 function setup(){
   const d=fixture(),dir=mkdtempSync(resolve('.local/m1-trial-test-')),path=dir+'/engineering-shadow.sqlite',j=new EngineeringJournal(path,true,d.clock);
@@ -29,7 +31,8 @@ function setup(){
   const forecaster=new TrialForecaster(protocol,model,hybrid,j,d.clock);
   const window=reviewWindow(d.at,[d.event,{...d.event,id:'TEST-ONLY next fixture',startsAt:new Date(Date.parse(d.event.startsAt)+86400000).toISOString()}]);
   const abody={protocolId:protocol.id,activatedAt:d.at,window,frozen:true as const,marketPID:1,researchPID:2,comparisonPID:3},activation={...abody,id:hash(abody)},marker={enabled:true as const,protocol,activation,journalPath:path};
-  return{...d,j,forecaster,model,protocol,marker,closeAll:()=>{j.close();d.close();rmSync(dir,{recursive:true,force:true});}};
+  d.store.db.exec('CREATE TABLE m1_trial_activations(id TEXT PRIMARY KEY,body TEXT NOT NULL)');d.store.db.prepare('INSERT INTO m1_trial_activations VALUES (?,?)').run(activation.id,JSON.stringify({markerHash:hash(marker)}));
+  return{...d,dir,j,forecaster,model,protocol,marker,hybrid,closeAll:()=>{j.close();d.close();rmSync(dir,{recursive:true,force:true});}};
 }
 test('M1 live routes use immutable matched pre-tip records; 3PM distribution and old objects are unchanged',()=>{
   const d=setup();try{
@@ -98,4 +101,20 @@ test('expired or replaced journal owner cannot publish, including within an open
     fence.raw.prepare("UPDATE engineering_runtime SET value=? WHERE key='trial-owner'").run(JSON.stringify({token:'TEST-ONLY replacement',expiresAt:new Date(Date.parse(d.at)+120000).toISOString()}));
     assert.throws(()=>d.j.db.exec('BEGIN IMMEDIATE'),/OWNERSHIP_LOST/);assert.equal(d.j.db.isTransaction,false);assert.equal(d.j.db.prepare('SELECT count(*) n FROM engineering_holds').get()!.n,1);
   }finally{d.closeAll();}
+});
+test('changing material news between bounded batches cannot starve later prop targets',()=>{
+  const d=setup();try{
+    for(let i=0;i<4;i++){const at=new Date(Date.parse(d.at)+i*1000).toISOString();d.setAt(at);const status=i%2?'Questionable':'Available',source=d.retain({data:[{player:{id:70},status}]},'https://api.balldontlie.io/nba/v1/player_injuries',at);d.store.set('live:injury:70',{status,source,observedAt:at});assert.equal(d.forecaster.cycle(d.store,10000,1).inserted,1);}
+    assert.equal(d.j.db.prepare('SELECT count(DISTINCT prop) n FROM engineering_predictions').get()!.n,4);
+  }finally{d.closeAll();}
+});
+test('identical relevant facts with later source clocks keep a forecast usable while current freshness still applies',()=>{
+  const d=setup();try{d.forecaster.cycle(d.store,10000,8);d.store.set('production:m1-trial',d.marker);const f=productionRouting(d.store,d.at,[d.event.id]).forecasts.find(f=>f.prop==='points')!;
+    const at=new Date(Date.parse(d.at)+60000).toISOString();d.setAt(at);const fixture=d.store.get<any>('live:fixture:100'),source=d.retain({data:[d.rawGame],meta:{}},'https://api.balldontlie.io/nba/v1/games',at);d.store.set('live:fixture:100',{...fixture,source});
+    d.store.set('live:injuries-complete',{at,source:d.retain({data:[],meta:{}},'https://api.balldontlie.io/nba/v1/player_injuries',at)});assert.doesNotThrow(()=>currentPlayerEvidence(d.store,f,at));
+    d.setAt(new Date(Date.parse(at)+4*3600000+1).toISOString());assert.throws(()=>currentPlayerEvidence(d.store,f,d.clock()),/injury|fixture/i);
+  }finally{d.closeAll();}
+});
+test('verified immutable reference cache is restricted to a physically read-only source and remains cutoff-bound',async()=>{
+  const d=setup();let ro:EfficientStore|undefined;try{const path=d.dir+'/source-test-only.sqlite';await backup(d.store.db,path);ro=new EfficientStore(path,true);assert.equal(ro.physicalReadOnly,true);assert.throws(()=>ro!.db.prepare("DELETE FROM logs").run(),/readonly/);const f=new TrialForecaster(d.protocol,d.model,d.hybrid,d.j,d.clock);assert.equal(f.cycle(ro,10000,8).inserted,4);assert.equal(f.cycle(ro,10000,8).inserted,0);}finally{ro?.close();d.closeAll();}
 });

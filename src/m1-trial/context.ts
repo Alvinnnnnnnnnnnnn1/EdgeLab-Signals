@@ -13,7 +13,11 @@ export function trialContext(s: Store, event: Event, playerId: string, teamId: s
   assertState(state,at,r=>s.hasReceipt(r));
   if(complete&&(ms(complete.at)>ms(at)||complete.source.simulated||!s.hasReceipt(complete.source)))throw Error('INVALID_COMPLETED_INJURY_SNAPSHOT');
   const context={state,injurySnapshot:complete,historyHead:s.db.prepare('SELECT rowid,id FROM logs ORDER BY rowid DESC LIMIT 1').get()??null,teamRoster:players.map(p=>({playerId:p.playerId,teamId:p.teamId,observedAt:p.observedAt,source:p.source})),availability:'UNCONFIRMED_CONDITIONAL_ON_PLAYING',starter:null,quantitativeTeammateResponse:null};
-  return{...context,hash:hash(context)};
+  // Later receipt clocks with identical relevant facts do not constitute news.
+  // Full original clocks remain in the record; current TTL gates run at issue.
+  const material=(v:any)=>v?Object.fromEntries(Object.entries(v).filter(([k])=>!['source','observedAt'].includes(k))):null;
+  const semantic={event,roster:state.roster?.value??null,ownInjury:material(injury(playerId)),injurySnapshotComplete:!!complete,teammates:players.filter(p=>p.playerId!==playerId).map(p=>({playerId:p.playerId,teamId:p.teamId,injury:material(injury(p.playerId))})),historyHead:context.historyHead,starter:null};
+  return{...context,hash:hash(semantic)};
 }
 export function assertTrialFreshness(s:Store,f:ExperimentalForecast,at:string) {
   const marker=s.get<any>('production:m1-trial');

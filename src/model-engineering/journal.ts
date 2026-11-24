@@ -45,6 +45,7 @@ export function verifyCachedQuote(source: Store, quote: Quote, at: string) {
 }
 export class EngineeringJournal {
   db: DatabaseSync;
+  private immutableReadOnlyRefs=new WeakMap<Store,Map<string,{known:number;start:number;completed:number|null;final:boolean;eventId:string}>>();
   constructor(path: string, private enabled = false, private clock = nowISO) {
     if (!enabled) { this.db = new DatabaseSync(':memory:'); return; }
     if (path !== ':memory:') {
@@ -82,11 +83,16 @@ export class EngineeringJournal {
     assertArtifact(input.artifact); assertState(input.state, input.asOf, r => source.hasReceipt(r));
     if (!props.includes(input.prop) || !input.state.fixture || !input.state.roster || !input.featureRefs.length || ms(input.artifact.trainedAt) > ms(input.asOf)) throw Error('MODEL_OR_FEATURE_PROVENANCE_REQUIRED');
     const verifyRefs = () => { for (const ref of input.featureRefs) {
+      const cachedMode=input.featureAvailability==='COMPLETED_FINAL_RECEIPT_AS_OF_GENERATION'&&(source as Store&{physicalReadOnly?:boolean}).physicalReadOnly===true;
+      let cache=this.immutableReadOnlyRefs.get(source);if(cachedMode&&!cache){cache=new Map();this.immutableReadOnlyRefs.set(source,cache);}
+      const key=hash([ref.id,ref.bodyHash]),cached=cachedMode?cache?.get(key):undefined;
+      if(cached){if(cached.known>=ms(input.asOf)||ms(ref.knownAt)!==cached.known||cached.start>=ms(input.asOf)||cached.completed!==null&&cached.completed>=ms(input.asOf)||!cached.final||cached.eventId===input.state.event.id)throw Error('INVALID_AS_OF_SOURCE');continue;}
       const raw = source.db.prepare('SELECT body FROM logs WHERE id=?').get(ref.id);
       if (!raw || hash(String(raw.body)) !== ref.bodyHash || ms(ref.knownAt) >= ms(input.asOf)) throw Error('FEATURE_MANIFEST_CHANGED_OR_FUTURE');
       const l = JSON.parse(String(raw.body)) as GameLog;
       const invalidGame = input.featureAvailability === 'COMPLETED_FINAL_RECEIPT_AS_OF_GENERATION' ? !l.final || l.event.id === input.state.event.id || ms(l.event.startsAt)>=ms(input.asOf) || !!l.completedAt&&ms(l.completedAt)>=ms(input.asOf) : l.event.startsAt.slice(0,10)>=input.asOf.slice(0,10);
       if (l.source.simulated || invalidGame || ms(l.observedAt) >= ms(input.asOf) || [l.source, ...(l.supportingSources ?? [])].some(r => ms(r.retrievedAt) >= ms(input.asOf) || !source.hasReceipt(r))) throw Error('INVALID_AS_OF_SOURCE');
+      if(cachedMode){const known=Math.max(ms(l.observedAt),...[l.source,...(l.supportingSources??[])].map(r=>ms(r.retrievedAt)));if(ms(ref.knownAt)!==known)throw Error('FEATURE_KNOWN_CLOCK_MISMATCH');cache!.set(key,{known,start:ms(l.event.startsAt),completed:l.completedAt?ms(l.completedAt):null,final:l.final,eventId:l.event.id});}
     } };
     const currentIdentity = () => {
       const fixture = source.get<{event: PregameState['event'];status: string}>(`live:fixture:${input.state.event.id.split(':').at(-1)}`), roster = source.get<{playerId: string;teamId: string}>(`live:roster:${input.state.playerId.split(':').at(-1)}`);

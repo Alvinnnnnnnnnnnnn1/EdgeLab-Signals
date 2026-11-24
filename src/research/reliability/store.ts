@@ -21,9 +21,10 @@ export function installFence(store:Store,fences:Fence[],clock=nowISO,assertTask=
 /** Scope caches to one task/read snapshot. Positive immutable receipt proofs
  * are reused; missing receipts are never negatively cached. */
 export class EfficientStore extends Store {
+ readonly physicalReadOnly:boolean;
  private bodies=new Map<string,boolean>();private receipts=new Set<string>();
  metrics={receiptCalls:0,bodyHashes:0,bodyBytes:0};
- constructor(path:string,readOnly=false,private clock=nowISO){super(':memory:');super.close();this.db=new DatabaseSync(path,{readOnly});this.db.exec('PRAGMA foreign_keys=ON; PRAGMA busy_timeout=150');}
+ constructor(path:string,readOnly=false,private clock=nowISO){super(':memory:');super.close();this.physicalReadOnly=readOnly;this.db=new DatabaseSync(path,{readOnly});this.db.exec('PRAGMA foreign_keys=ON; PRAGMA busy_timeout=150');}
  override hasReceipt(source:Receipt){
   this.metrics.receiptCalls++;const id=hash(source);if(this.receipts.has(id))return true;
   if(!this.bodies.has(source.hash)){const row=this.db.prepare('SELECT body FROM receipts WHERE hash=?').get(source.hash)as{body:string}|undefined;if(!row)return false;this.metrics.bodyHashes++;this.metrics.bodyBytes+=Buffer.byteLength(row.body);if(hash(row.body)!==source.hash)return false;this.bodies.set(source.hash,true);}

@@ -33,7 +33,7 @@ export function generationFeatures(rows:ReturnType<typeof retainedRows>,at:strin
 }
 export class TrialForecaster {
   private epoch=''; private rows:ReturnType<typeof retainedRows>=[]; private get:ReturnType<typeof preparedFeatures>|null=null;
-  private attempted=new Map<string,string>();
+  private attempted=new Map<string,string>();private cursor='';
   constructor(private protocol:TrialProtocol,private model:M1Artifact,private hybrid:any,private journal:EngineeringJournal,private clock=()=>new Date().toISOString()){}
   cycle(s:Store,budgetMs=2000,maxRecords=4){
     const began=performance.now(),at=this.clock();if(!trialIdle(s,at))return{state:'YIELDED_TO_SOURCE_OR_MARKETS',inserted:0,networkRequests:0};
@@ -44,13 +44,16 @@ export class TrialForecaster {
       if(!this.get||epoch!==this.epoch){this.rows=retainedRows(s,at);this.get=generationFeatures(this.rows,at);this.epoch=epoch;this.attempted.clear();}
       const rowRefs=new Map(this.rows.map(r=>[r.log,r.ref]));
       const models=s.db.prepare('SELECT body FROM research_models ORDER BY at,id').all().map(r=>JSON.parse(String(r.body))),inferenceStart=performance.now(),contexts=new Map<string,ReturnType<typeof trialContext>>();
-      for(const fixture of upcomingFixtures(s,at)){
-        try{fixtureProof(s,fixture.event,fixture.source,this.clock());}catch(e){holds.push({eventId:fixture.event.id,reason:(e as Error).message});continue;}
-        const players=s.db.prepare("SELECT value FROM meta WHERE key LIKE 'live:roster:%' AND json_extract(value,'$.teamId') IN (?,?) ORDER BY key").all(fixture.event.homeId,fixture.event.awayId).map(r=>JSON.parse(String(r.value)));
-        for(const player of players)for(const prop of props){
-          const now=this.clock(),key=hash([fixture.event,player.playerId,prop]);
+      let fixtures=upcomingFixtures(s,at);const imminent=fixtures.filter(f=>ms(f.event.startsAt)-ms(at)<=90*60000);if(imminent.length)fixtures=imminent;
+      const targets=fixtures.flatMap(fixture=>s.db.prepare("SELECT value FROM meta WHERE key LIKE 'live:roster:%' AND json_extract(value,'$.teamId') IN (?,?) ORDER BY key").all(fixture.event.homeId,fixture.event.awayId).flatMap(r=>{const player=JSON.parse(String(r.value));return props.map(prop=>({fixture,player,prop,key:hash([fixture.event,player.playerId,prop])}));}));
+      const priorIndex=targets.findIndex(t=>t.key===this.cursor),startIndex=priorIndex<0?0:(priorIndex+1)%targets.length;
+      const checkedFixtures=new Set<string>();
+      for(let offset=0;offset<targets.length;offset++){
+          const {fixture,player,prop,key}=targets[(startIndex+offset)%targets.length],now=this.clock();
           if(performance.now()-inferenceStart>=budgetMs||examined>=maxRecords)return{state:'YIELDED',inserted,examined,holds,preparationMs:inferenceStart-began,networkRequests:0};
+          this.cursor=key;
           try{
+            if(!checkedFixtures.has(fixture.event.id)){fixtureProof(s,fixture.event,fixture.source,now);checkedFixtures.add(fixture.event.id);}
             const contextKey=hash([fixture.event,player.playerId]);let context=contexts.get(contextKey);if(!context){rosterProof(s,player,now);context=trialContext(s,fixture.event,player.playerId,player.teamId,now);contexts.set(contextKey,context);}const stamp=context.hash;
             if(this.attempted.get(key)===stamp)continue;this.attempted.set(key,stamp);examined++;
             const f=this.get!({event:fixture.event,...player},prop,fixture.event.startsAt);if(!f)throw Error('INSUFFICIENT_KNOWN_COMPLETED_HISTORY');f.cutoff=now;
@@ -72,8 +75,7 @@ export class TrialForecaster {
             const minutesSD=Math.sqrt(m1.minutesPMF.reduce((sum,w,m)=>sum+w*(m-m1.minutesMean)**2,0));
             const forecast:ExperimentalForecast={id:hash([this.protocol.id,prediction.id,'production']),at:prediction.registeredAt,event:fixture.event,playerId:player.playerId,player:player.player,teamId:player.teamId,prop,policy:SUGGESTION_POLICY,model:'M1 partially pooled minutes x production (owner experimental trial)',modelVersion:this.model.algorithm,routingVersion:TRIAL_VERSION,artifactHash:hash(artifact),distribution:m1.pmf,baseline:simple.pmf,challenger:calibrateCDF(selected.pmf,a.calibration),stress:[Math.max(1,m1.minutesMean-minutesSD),Math.min(75,m1.minutesMean+minutesSD)].map(minuteCenter=>predictM1(f,this.model,{minuteCenter})!.pmf),n:f.history.length,currentSeasonGames:f.history.filter(r=>r.log.event.season===fixture.event.season).length,lastGameAt:f.history.at(-1)!.log.event.startsAt,expectedMinutes:m1.minutesMean,minutesSD,teamChanged:f.recentTeamChanged,participationProbability:null,conditionalOnParticipating:true,validated:false,inputs,inputHash:hash(inputs)};
             ready(this.journal,this.protocol,prediction,forecast);
-          }catch(e){const reason=(e as Error).message;holds.push({eventId:fixture.event.id,playerId:player.playerId,prop,reason});this.journal.hold({eventId:fixture.event.id,playerId:player.playerId,prop},reason);}
-        }
+          }catch(e){const reason=(e as Error).message;if(/BUSY|locked|BACKDATED|REGISTRATION_CROSSED/.test(reason))this.attempted.delete(key);holds.push({eventId:fixture.event.id,playerId:player.playerId,prop,reason});this.journal.hold({eventId:fixture.event.id,playerId:player.playerId,prop},reason);}
       }
       return{state:'COMPLETE',inserted,examined,holds,networkRequests:0};
     }finally{s.db.exec('ROLLBACK');}
