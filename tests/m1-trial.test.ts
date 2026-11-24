@@ -17,6 +17,7 @@ import { productionRouting,legacyProductionRouting } from '../src/production/rou
 import { trialReview } from '../src/m1-trial/review';
 import { drainTrialRollback } from '../src/m1-trial/rollback';
 import { fenceTrialJournal } from '../src/m1-trial/fence';
+import { trialCycleDelay } from '../src/m1-trial/service';
 import { currentPlayerEvidence,archivePricedCandidates } from '../src/suggestions/engine';
 import { backup } from 'node:sqlite';
 import { EfficientStore } from '../src/research/reliability/store';
@@ -126,4 +127,8 @@ test('a stale fixture emits one durable hold per evidence revision and recovers 
     const source=d.retain({data:[d.rawGame],meta:{}},'https://api.balldontlie.io/nba/v1/games',at);d.store.set('live:fixture:100',{event:d.event,status:'scheduled',source});
     assert.equal(d.forecaster.cycle(d.store,10000,8).inserted,4);assert.equal(d.j.db.prepare('SELECT count(*) n FROM engineering_holds').get()!.n,1);
   }finally{d.closeAll();}
+});
+
+test('cached catch-up stays bounded and backs off whenever the source or market owns work',()=>{
+ const d=setup();try{const work=d.forecaster.cycle(d.store,10000,1);assert.equal(work.inserted,1);assert.equal(trialCycleDelay(work),1000);d.store.acquire('experimental-cycle',d.at,60);const owned=d.forecaster.cycle(d.store);assert.equal(owned.inserted,0);assert.ok(trialCycleDelay(owned)>=5000);assert.equal(trialCycleDelay({state:'COMPLETE',examined:0}),15000);}finally{d.closeAll();}
 });
