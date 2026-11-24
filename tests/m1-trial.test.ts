@@ -18,7 +18,7 @@ import { trialReview } from '../src/m1-trial/review';
 import { drainTrialRollback } from '../src/m1-trial/rollback';
 import { fenceTrialJournal } from '../src/m1-trial/fence';
 import { trialCycleDelay } from '../src/m1-trial/service';
-import { currentPlayerEvidence,archivePricedCandidates } from '../src/suggestions/engine';
+import { currentPlayerEvidence,archivePricedCandidates,rankAndIssue,suggestions,dispatchSuggestions } from '../src/suggestions/engine';
 import { backup } from 'node:sqlite';
 import { EfficientStore } from '../src/research/reliability/store';
 
@@ -131,4 +131,13 @@ test('a stale fixture emits one durable hold per evidence revision and recovers 
 
 test('cached catch-up stays bounded and backs off whenever the source or market owns work',()=>{
  const d=setup();try{const work=d.forecaster.cycle(d.store,10000,1);assert.equal(work.inserted,1);assert.equal(trialCycleDelay(work),1000);d.store.acquire('experimental-cycle',d.at,60);const owned=d.forecaster.cycle(d.store);assert.equal(owned.inserted,0);assert.ok(trialCycleDelay(owned)>=5000);assert.equal(trialCycleDelay({state:'COMPLETE',examined:0}),15000);}finally{d.closeAll();}
+});
+test('isolated issued recommendations retain the routed M1 PMF and source evidence and cannot issue or send twice',async()=>{
+ const d=setup();try{d.forecaster.cycle(d.store,10000,8);d.store.set('production:m1-trial',d.marker);
+  const issued=rankAndIssue(d.store,d.config,d.quotes,d.terms,d.at,d.clock),rows=suggestions(d.store),m1=rows.filter(s=>s.quote.prop!=='threes');
+  assert.ok(issued.issued>0);assert.ok(m1.length>0,'A TEST-ONLY M1 candidate must pass the unchanged qualifier');
+  for(const s of m1){assert.equal(s.forecast.modelVersion,M1_VERSION);assert.equal((s.forecast.inputs as any).trialId,d.protocol.id);assert.ok(s.issueEvidence);const r=d.j.db.prepare('SELECT body FROM m1_trial_ready WHERE event_id=? AND player_id=? AND prop=?').get(s.quote.event.id,s.quote.playerId,s.quote.prop);assert.equal(hash(s.forecast.distribution),hash(JSON.parse(String(r!.body)).forecast.distribution));}
+  assert.equal(rankAndIssue(d.store,d.config,d.quotes,d.terms,d.at,d.clock).issued,0);
+  assert.ok((await dispatchSuggestions(d.store,d.config,d.transport,d.clock)).accepted>0);const sent=d.sends();assert.equal((await dispatchSuggestions(d.store,d.config,d.transport,d.clock)).accepted,0);assert.equal(d.sends(),sent);
+ }finally{d.closeAll();}
 });
