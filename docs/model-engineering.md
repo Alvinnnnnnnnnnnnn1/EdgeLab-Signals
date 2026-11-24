@@ -24,14 +24,14 @@ The genuine retrospective experiment trained on 273 eligible player-games over 3
 
 | Prop | EWA CRPS | Raw M1 CRPS | M2 CRPS | Selection winner's final CRPS |
 |---|---:|---:|---:|---:|
-| PTS | 3.364867 | 3.322779 | 3.519515 | Beta M1: 3.356011 |
-| REB | 1.321162 | 1.305849 | 1.367214 | Platt M1: 1.298201 |
-| AST | 0.962613 | 0.950081 | 0.988675 | Platt M1: 0.956010 |
-| 3PM | 0.624724 | 0.644798 | 0.664756 | EWA: 0.624724 |
+| PTS | 3.364867 | 3.322807 | 3.519515 | Beta M1: 3.356108 |
+| REB | 1.321162 | 1.305898 | 1.367214 | Platt M1: 1.298231 |
+| AST | 0.962613 | 0.950065 | 0.988675 | Platt M1: 0.956050 |
+| 3PM | 0.624724 | 0.644799 | 0.664756 | EWA: 0.624724 |
 
 Do not reselect raw M1 after inspecting the final period, call threes improved, or promote any candidate. Raw M1 remains the predeclared primary SHADOW candidate. M2 is rejected for activation on these results; M3 has no installed suitable tooling. Calibration is mixed and does not repair selected-opportunity calibration by construction. Historical ROI is unavailable on this cohort. Raw model point bias, interval coverage, every simple control, all calibration bins/PIT, NLL, date/fixture intervals and complete predictions remain in private reports.
 
-The computation used about 195 seconds and 1,063 MiB peak RSS. First archive attempt hit V8's string limit; the streaming rerun completed computation and gzip output but hit a Buffer-to-JSON hashing heap limit. `artifacts.ts` repaired finalisation without retraining or rescoring: gzip CRC, all 90,733 PMFs and per-model counts verified, byte SHA-256 manifest retained. Failed attempts are preserved; they are not statistical successes or extra experiments.
+The computation used about 223 seconds and 874 MiB peak RSS. First archive attempt hit V8's string limit; the streaming rerun completed computation and gzip output but hit a Buffer-to-JSON hashing heap limit. `artifacts.ts` repaired finalisation without retraining or rescoring: gzip CRC, all 90,733 PMFs and per-model counts verified, byte SHA-256 manifest retained. Failed attempts are preserved; they are not statistical successes or extra experiments.
 
 ## Separate SHADOW lifecycle
 
@@ -47,7 +47,7 @@ The promotion rule is frozen in `journal.ts` before prospective outcomes: at lea
 
 The original frozen manifest's source ordering is needed for bit-identical floating-point features. Replay now reproduces every inspected original feature value without edits to source data, stored features or forecasts. The initial order mismatch and failed replay logs remain preserved.
 
-On the 203-player, ten-fixture, one-date incident population, active/M1 CRPS is PTS 3.315559/3.322923, REB 1.268188/1.271984, AST 0.930313/0.923530, 3PM 0.664495/0.677444. Date intervals are unavailable with one date; fixture intervals are exploratory. Across the 23 issued selections, original/M1 same-input Brier is 0.368500/0.351096. This is seen-data diagnosis, not independent improvement. The unchanged contemporaneous no-vig benchmark remains 0.260668. No causal share of the loss is attributed to freshness, minutes, rates or selection effects; the residual remains unidentified.
+On the 203-player, ten-fixture, one-date incident population, active/M1 CRPS is PTS 3.315559/3.322766, REB 1.268188/1.271948, AST 0.930313/0.923515, 3PM 0.664495/0.677459. Date intervals are unavailable with one date; fixture intervals are exploratory. Across the 23 issued selections, original/M1 same-input Brier is 0.368500/0.351096. This is seen-data diagnosis, not independent improvement. The unchanged contemporaneous no-vig benchmark remains 0.260668. No causal share of the loss is attributed to freshness, minutes, rates or selection effects; the residual remains unidentified.
 
 `fit-shadow.ts` prepares a single additional frozen primary-family refit on available pre-incident labels for future SHADOW. This reuses historical final-period labels as training and therefore makes no new historical test claim. It keeps the same recipe and constants, excludes the inspected incident dates and changes no live model. Its data-as-of clock and actual training clock are distinct. Only subsequently registered, independent outcomes can evaluate this newly refitted artifact.
 
@@ -56,3 +56,11 @@ On the 203-player, ten-fixture, one-date incident population, active/M1 CRPS is 
 `combos.ts` implements exact same-game PRA/PA/PR/RA targets, complete/incomplete/unknown/DNP classifications, direct last5/last10/EWA/season-shrunk/empirical count PMFs and an experimental shared-minutes paired-rate distribution. Independent convolution is explicitly a diagnostic. Within-player rate dependence refuses mixed-player aggregation. Original component sources and correction identities remain attached to inputs; nothing is converted into a single-stat market identity.
 
 All four keys remain `RESEARCH_ONLY`: no combo journal registration, acquisition, recommendation, outbox or Telegram path is enabled. A player-fixture exposure identity is supplied for future integration; no transactional combo issuance policy is activated, and the existing permanent single-stat claims/governor remain unchanged. Future production needs independent joint calibration, exact per-book terms/quotes, a separate finite grant and an explicit cross-market exposure policy. Research comparisons use fixed thresholds and seen retrospective dates, never assumed bookmaker prices. This foundation does not claim completion of the later independent prospective/market/exposure phases.
+
+Final correction: `pooled-minutes-rate/1.0.1` excludes target-game team/home labels from M1/M2 features. Only a team change between already observed prior games is used. A dedicated perturbation test proves target team/home changes cannot change either model's inputs. Earlier v2 archives remain retained and superseded. The corrected v3 final-period scores above are repeated development evidence, not a newly untouched holdout. No constants or candidate family were tuned to improve those scores.
+
+The prepared prospective refit uses 5,903 eligible pre-incident player-games over 82 training dates, cutoff 23 November 2026 00:00 UTC. Artifact `46b6bf59eba812071c08b223264b431d0a5637ebe0e9fc7e50a0febe36030850`; statistical source hash `e48c36e476f99e3153a4fddbd9e39f1bc6810444bb6fba3105695933e227c59e`. This refit has zero registered prospective outcomes and no promotion proof. It is separate from historical experiment artifact `118d040175bf384c61640626fa196a2d038a3c6254b11e571b3e8d4568ad543c`.
+
+Corrected combo research retained 53,112 full predictive PMFs: 2,213 player-games per combination over the same 16 inspected dates. Direct EWA/shared-minutes CRPS is PRA 4.421192/4.3534, PA 3.720814/3.6805, PR 4.037048/3.9857, RA 1.867344/1.8576. These are overlapping targets, not 8,852 independent outcomes; some season-shrunk controls remain stronger. There are 5,600 explicit held combination targets, including unknown participation and inadequate history. No live combo coverage, terms, ROI or joint calibration is established.
+
+Quality reporting uses the first registration per model/player/game/prop as its primary cohort and retains refresh revisions separately. A later incomplete final correction appends a HELD check and removes a stale prior grade from current summaries without deleting original grades. `report-cli.ts` reads this independent journal without opening a production writer. Snapshot validation also binds each normalized log, revision identity and attempt metadata to the original audit references.
