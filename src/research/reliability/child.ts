@@ -6,7 +6,7 @@ import{FencedStore}from'./store';import{computeAnalytics}from'./analytics';
 import{ensureFinalJob,finalSchedule,finalStep,gradingVersion}from'./finals';
 import{safeReason,type TaskRequest}from'./supervisor';
 
-export function reconcileGrades(store:FencedStore,at:string){const version=gradingVersion(store),previous=store.get<{version:string}>('reliable:grading');if(previous?.version===version)return{state:'unchanged',settled:0};const result=settleSuggestions(store,at);store.fence.assert();store.set('reliable:grading-attempt',{at,version,...result});if(!result.held.length)store.set('reliable:grading',{at,version,...result});return result;}
+export function reconcileGrades(store:FencedStore,at:string){const version=gradingVersion(store),previous=store.get<{version:string}>('reliable:grading');if(previous?.version===version)return{state:'unchanged',settled:0};const result=settleSuggestions(store,at);store.fence.assert();store.set('reliable:grading-attempt',{at,version,...result});if(!result.held.length&&!result.pendingFinalEvidence.length)store.set('reliable:grading',{at,version,...result});return result;}
 async function execute(request:TaskRequest){
  if(request.kind==='analytics'){setPriority(19);globalThis.fetch=async()=>{throw new Error('ANALYTICS_NETWORK_DISABLED');};return computeAnalytics(request.database,request.at);}
  const config=loadConfig(request.configFile);if(config.database!==request.database)throw new Error('RESEARCH_DATABASE_BINDING_CHANGED');

@@ -37,4 +37,4 @@ export async function finalStep(store:Store,http:JsonHTTP,at:string){
  }
  const next=finalSchedule(store,at)[0]?.nextAt??new Date(ms(at)+6*3600000).toISOString();return{nextAt:next,reason:null};
 }
-export function gradingVersion(store:Store){return hash(['hypothetical-grading/1.4.5',...['logs','experimental_suggestions','source_receipts','receipts'].map(t=>store.db.prepare(`SELECT count(*) AS n,max(rowid) AS last FROM ${t}`).get())]);}
+export function gradingVersion(store:Store){return hash(['hypothetical-grading/1.4.8.1',...['logs','experimental_suggestions','source_receipts','receipts'].map(t=>store.db.prepare(`SELECT count(*) AS n,max(rowid) AS last FROM ${t}`).get())]);}

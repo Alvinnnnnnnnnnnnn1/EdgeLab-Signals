@@ -1,3 +1,4 @@
+import {exposureBlock} from './exposure';
 import{hasPlacedFamily}from'./placements';
 import {marketMessage} from '../multi-bookmaker/message';
 import {BOOKMAKERS,type Bookmaker} from '../multi-bookmaker/contracts';
@@ -18,7 +19,7 @@ import {scoreRows,pairedDifference,type ScoredPrediction} from '../research/scor
 import {thresholds} from '../research/experiment';
 import {ensureSuggestionFamilies,duplicateFamilyDelivery} from './families';
 
-export interface Suggestion {id:string;at:string;quote:Quote;forecastId:string;forecast:ExperimentalForecast;win:number;push:number;estimatedEV:number;conservativeEV:number;disagreement:number;score:number;reasoning:string;confidence:string;terms:Terms;hypotheticalStakeAUD:5;experimental:true;validated:false;supersedes:string|null;marketComparison?:MultiEvidence;}
+export interface Suggestion {id:string;at:string;quote:Quote;forecastId:string;forecast:ExperimentalForecast;win:number;push:number;estimatedEV:number;conservativeEV:number;disagreement:number;score:number;reasoning:string;confidence:string;terms:Terms;hypotheticalStakeAUD:5;experimental:true;validated:false;supersedes:string|null;marketComparison?:MultiEvidence;exposurePolicy?:{id:string;hash:string;maxPerFixture:number;maxPerPlayerFixture:number};}
 export function suggestions(store:Store):Suggestion[]{return(store.db.prepare('SELECT body FROM experimental_suggestions ORDER BY at,id').all() as {body:string}[]).map(r=>JSON.parse(r.body));}
 export function currentPlayerEvidence(store:Store,f:ExperimentalForecast,at:string){
   const current=store.get<{event:Quote['event'];source:Quote['source'];status:string}>(`live:fixture:${f.event.id.split(':').at(-1)}`);
@@ -62,15 +63,15 @@ export interface QualifiedSuggestion {quote:Quote;forecast:ExperimentalForecast;
  * a valid immutable decision and current activation authority. */
 export function issueQualifiedSuggestions(store:Store,config:Config,eligible:QualifiedSuggestion[],at:string,clock=()=>at,scope?:{assertOwner:()=>void}){
   if(eligible.some(i=>i.marketComparison)&&!scope)throw new Error('MULTI_ISSUANCE_OWNERSHIP_REQUIRED');scope?.assertOwner();ensureSuggestionFamilies(store);
-  const issued:Suggestion[]=[],families=new Set<string>();let permanentlySuppressed=0;
-  for(const item of eligible){const {quote:q,forecast:f}=item,family=hash([q.event.id,q.playerId,q.prop]);if(families.has(family))continue;families.add(family);if(!config.liveSuggestionsEnabled)continue;
+  const issued:Suggestion[]=[],families=new Set<string>();let permanentlySuppressed=0;const exposureSuppressed:{family:string;reason:string}[]=[];
+  for(const item of (config.recommendationExposure.enabled?[...eligible].sort((a,b)=>b.assessment.score-a.assessment.score||hash(a.quote).localeCompare(hash(b.quote))):eligible)){const {quote:q,forecast:f}=item,family=hash([q.event.id,q.playerId,q.prop]);if(families.has(family))continue;families.add(family);if(!config.liveSuggestionsEnabled)continue;
     const now=clock();if(!quoteFresh(q,now,180,120)||notificationWindow(now,q.expiresAt).state!=='ready')continue;currentPlayerEvidence(store,f,now);if(item.marketComparison){assertMultiDelivery(store,config,item.marketComparison,q,now,f);const current=assessBookmakerOffer(q,item.marketComparison.opposite,f,item.terms,now);if(hash(current)!==hash(item.assessment))throw new Error('MULTI_ASSESSMENT_CHANGED');}else if(q.bookmaker!=='sportsbet')throw new Error('MULTI_ISSUANCE_AUTHORITY_REQUIRED');
-    const record:Suggestion={id:hash([SUGGESTION_POLICY,f.id,q,now]),at:now,quote:q,forecastId:f.id,forecast:f,...item.assessment,terms:item.terms,hypotheticalStakeAUD:5,experimental:true,validated:false,supersedes:null,...(item.marketComparison?{marketComparison:item.marketComparison}:{})};
-    const created=store.transaction(()=>{scope?.assertOwner();if(item.marketComparison)assertMultiDelivery(store,config,item.marketComparison,q,clock(),f);if(store.db.prepare('SELECT family FROM experimental_suggestion_families WHERE family=?').get(family)||hasPlacedFamily(store,family))return false;store.db.prepare('INSERT INTO experimental_suggestions VALUES (?,?,?,?)').run(record.id,now,family,JSON.stringify(record));enqueueSuggestionBatch(store,[record],now);scope?.assertOwner();if(item.marketComparison&&!quoteFresh(q,clock(),180,120))throw new Error('MULTI_ISSUANCE_CROSSED_DEADLINE');return true;});if(created)issued.push(record);else permanentlySuppressed++;
+    const record:Suggestion={id:hash([SUGGESTION_POLICY,f.id,q,now]),at:now,quote:q,forecastId:f.id,forecast:f,...item.assessment,terms:item.terms,hypotheticalStakeAUD:5,experimental:true,validated:false,supersedes:null,...(config.recommendationExposure.enabled&&config.recommendationExposure.policy?{exposurePolicy:{id:config.recommendationExposure.policy.id,hash:hash(config.recommendationExposure.policy),maxPerFixture:config.recommendationExposure.policy.maxPerFixture,maxPerPlayerFixture:config.recommendationExposure.policy.maxPerPlayerFixture}}:{}),...(item.marketComparison?{marketComparison:item.marketComparison}:{})};
+    const created=store.transaction(()=>{scope?.assertOwner();if(item.marketComparison)assertMultiDelivery(store,config,item.marketComparison,q,clock(),f);if(store.db.prepare('SELECT family FROM experimental_suggestion_families WHERE family=?').get(family)||hasPlacedFamily(store,family))return false;const exposure=exposureBlock(store,config.recommendationExposure,q,clock());if(exposure){exposureSuppressed.push({family,reason:exposure});return false;}store.db.prepare('INSERT INTO experimental_suggestions VALUES (?,?,?,?)').run(record.id,now,family,JSON.stringify(record));enqueueSuggestionBatch(store,[record],now);scope?.assertOwner();if(item.marketComparison&&!quoteFresh(q,clock(),180,120))throw new Error('MULTI_ISSUANCE_CROSSED_DEADLINE');return true;});if(created)issued.push(record);else if(!exposureSuppressed.some(r=>r.family===family))permanentlySuppressed++;
   }
   // Consolidate new recommendations from this fixture into bounded Telegram pages.
   if(issued.length>1){store.transaction(()=>{scope?.assertOwner();const pending=issued.filter(s=>store.db.prepare("SELECT id FROM experimental_outbox WHERE id=? AND state='pending'").get(hash(['suggestion-batch',[s.id]])));for(const s of pending)store.db.prepare("UPDATE experimental_outbox SET state='consolidated' WHERE id=? AND state='pending'").run(hash(['suggestion-batch',[s.id]]));let batch:Suggestion[]=[];for(const s of pending){if(batch.length&&suggestionMessage([...batch,s]).length>3500){enqueueSuggestionBatch(store,batch,at);batch=[];}batch.push(s);}if(batch.length)enqueueSuggestionBatch(store,batch,at);scope?.assertOwner();});}
-  return{issued:issued.length,ids:issued.map(s=>s.id),permanentlySuppressed};
+  return{issued:issued.length,ids:issued.map(s=>s.id),permanentlySuppressed,exposureSuppressed};
 }
 
 export function archivePricedCandidates(store:Store,quotes:Quote[],at:string){
@@ -102,14 +103,14 @@ export async function dispatchSuggestions(store:Store,config:Config,transport=ne
 // Load only fixtures being reconciled; repeatedly parsing the full historical
 // source archive must not delay live market deadlines.
 function eventLogReader(store:Store){const cache=new Map<string,GameLog[]>();return(id:string)=>{if(!cache.has(id))cache.set(id,(store.db.prepare('SELECT body FROM logs WHERE event_id=? ORDER BY observed_at').all(id) as {body:string}[]).map(r=>JSON.parse(r.body) as GameLog));return cache.get(id)!;};}
-export function settleSuggestions(store:Store,at:string){let settled=0;const held:{id:string;reason:string}[]=[],logs=eventLogReader(store);
-  for(const s of suggestions(store)){const final=logs(s.quote.event.id).filter(l=>l.playerId===s.quote.playerId).sort((a,b)=>ms(b.observedAt)-ms(a.observedAt))[0];if(!final)continue;
+export function settleSuggestions(store:Store,at:string){let settled=0;const held:{id:string;reason:string}[]=[],pendingFinalEvidence:{id:string;reason:string}[]=[],logs=eventLogReader(store);
+  for(const s of suggestions(store)){const final=logs(s.quote.event.id).filter(l=>l.playerId===s.quote.playerId).sort((a,b)=>ms(b.observedAt)-ms(a.observedAt))[0];if(!final){if(!store.db.prepare('SELECT id FROM experimental_grades WHERE signal_id=? LIMIT 1').get(s.id))pendingFinalEvidence.push({id:s.id,reason:'FINAL_PLAYER_STATISTICS_NOT_RETAINED'});continue;}
     try{for(const source of [final.source,...(final.supportingSources??[])])retained(store,source,at);const result=grade({id:s.id,issuedAt:s.at,simulated:false,decision:{quote:s.quote}},final,at);
       const previous=(store.db.prepare('SELECT body FROM experimental_grades WHERE signal_id=? ORDER BY at DESC,id DESC LIMIT 1').get(s.id) as {body:string}|undefined),old=previous?JSON.parse(previous.body) as Outcome:null;
       if(old&&old.result===result.result&&old.value===result.value)continue;if(old&&ms(result.evidence.observedAt)<=ms(old.evidence.observedAt))throw new Error('Older/ambiguous correction held');
       settled+=Number(store.db.prepare('INSERT OR IGNORE INTO experimental_grades VALUES (?,?,?,?)').run(result.id,s.id,at,JSON.stringify({...result,...(old?{corrects:old.id}:{}),hypotheticalProfitAUD:result.units*5})).changes);
     }catch(e){held.push({id:s.id,reason:(e as Error).message});}
-  }return{settled,held};
+  }return{settled,held,pendingFinalEvidence};
 }
 export function scoreExperimentalForecasts(store:Store,at:string,forecasts:Iterable<ExperimentalForecast>=experimentalForecasts(store)){const logs=eventLogReader(store),groups=new Map<Prop,{chosen:ScoredPrediction[];baseline:ScoredPrediction[];challenger:ScoredPrediction[];minutes:{predicted:number;actual:number}[]}>();
   for(const f of forecasts){if(f.inputHash!==hash(f.inputs)||ms(f.at)>=ms(f.event.startsAt)-120000)continue;const final=logs(f.event.id).filter(l=>!l.source.simulated&&hash(l.event)===hash(f.event)&&l.playerId===f.playerId&&l.teamId===f.teamId&&l.final&&l.participated===true&&l.stats[f.prop]!==null&&ms(l.observedAt)>ms(f.event.startsAt)&&ms(l.observedAt)<=ms(at)).sort((a,b)=>ms(b.observedAt)-ms(a.observedAt))[0];if(!final)continue;

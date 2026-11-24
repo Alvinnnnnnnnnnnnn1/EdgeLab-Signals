@@ -1,9 +1,11 @@
+import {exposureConfigSchema} from '../suggestions/exposure';
 import {multiConfigSchema} from '../multi-bookmaker/contracts';
 import { readFileSync, existsSync, statSync } from 'node:fs';
 import { z } from 'zod';
 import { leagueSchema, stamp } from './domain';
 const provider = z.object({ enabled: z.boolean().default(false), tier: z.enum(['free', 'all-star', 'goat']).default('free'), dailyLimit: z.number().int().min(0).max(10000).default(0), monthlyCredits: z.number().int().min(0).default(0), reserve: z.number().int().min(0).default(0), minIntervalSeconds: z.number().int().min(1).default(60) }).strict();
 export const configSchema = z.object({
+  recommendationExposure:exposureConfigSchema.prefault({}),
   multiBookmaker:multiConfigSchema.prefault({}),
   database: z.string().default('.local/signals.sqlite'), networkEnabled: z.boolean().default(false), deliveryEnabled: z.boolean().default(false),
   operatingMode:z.enum(['disabled','research','shadow','qualified']).default('disabled'),
