@@ -6,7 +6,7 @@ import { features } from '../src/research/features';
 import { hash, props } from '../src/core/domain';
 import { probabilities } from '../src/core/models';
 import { summary } from '../src/research/distributions';
-import { M1_VERSION, predictM1, m1Minutes, sharedMinuteScenarios, type M1Artifact } from '../src/model-engineering/m1';
+import { M1_VERSION, predictM1, m1Minutes, minuteVector, sharedMinuteScenarios, type M1Artifact } from '../src/model-engineering/m1';
 function fixture() {
   const store = new Store(':memory:'), d = syntheticData(store), rows = d.logs.map(log => ({ log, metadata: log.research ?? { phase: 'regular' as const, overtimePeriods: 0, threeAttempts: 6, rosterOpportunityVerified: false } }));
   const prior = { rate: .5, priorMinutes: 120, excess: .08, minuteSlope: .001, attemptRate: .2, makeRate: .35 };
@@ -51,8 +51,14 @@ test('common minutes scenarios are sampled once; role change widens sensitivity 
   const d = fixture(); try {
     const predictions = Object.fromEntries(props.map(p => [p, predictM1(d.get(p), d.artifact)!])) as Parameters<typeof sharedMinuteScenarios>[0];
     assert.deepEqual(sharedMinuteScenarios(predictions), sharedMinuteScenarios(predictions));
-    const f = d.get('points'), original = m1Minutes(f, d.artifact), changed = structuredClone(f); changed.recentTeamChanged = true;
+    const f = d.get('points'), original = m1Minutes(f, d.artifact), changed = structuredClone(f); changed.history.at(-1)!.log.teamId = 'TEST:KNOWN_PRIOR_TRADE';
     const variance = (p: number[]) => { const mean = summary(p).mean; return p.reduce((s, w, k) => s + w * (k - mean) ** 2, 0); };
     assert.ok(variance(m1Minutes(changed, d.artifact)) > variance(original));
+  } finally { d.store.close(); }
+});
+test('target-game team/home labels and target outcomes cannot change M1/M2 inputs or predictions', () => {
+  const d = fixture(); try {
+    const f = d.get('points'), changed = structuredClone(f); changed.recentTeamChanged = !f.recentTeamChanged; changed.values[8] = 1 - f.values[8]; changed.values[9] = 1 - f.values[9];
+    assert.equal(hash(minuteVector(f)), hash(minuteVector(changed))); assert.equal(hash(predictM1(f, d.artifact)), hash(predictM1(changed, d.artifact)));
   } finally { d.store.close(); }
 });

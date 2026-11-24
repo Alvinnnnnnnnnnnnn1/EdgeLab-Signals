@@ -3,13 +3,16 @@ import type { FeatureSet } from '../research/features';
 import { average, negativeBinomial, summary, betaBinomial, rng, sampleCount } from '../research/distributions';
 import { knownAt, type RetainedRow } from './data';
 
-export const M1_VERSION = 'pooled-minutes-rate/1.0.0';
+export const M1_VERSION = 'pooled-minutes-rate/1.0.1';
 export type RoleBand = 'low' | 'rotation' | 'high';
 export const roleBand = (m: number): RoleBand => m < 15 ? 'low' : m < 28 ? 'rotation' : 'high';
+/** A target game's box-score team is an outcome-time fact in retrospective
+ * research. Only an already observed change between prior games is a feature. */
+export const laggedTeamChanged = (f: FeatureSet) => f.history.length > 1 && f.history.at(-1)!.log.teamId !== f.history.at(-2)!.log.teamId;
 export const bound = (x: number, low: number, high: number) => Math.max(low, Math.min(high, x));
 export const minuteVector = (f: FeatureSet) => {
   const minutes = f.history.map(r => r.log.minutes!), recent = minutes.slice(-20), weights = recent.map((_, i) => 2 ** (-(recent.length - 1 - i) / 5));
-  return [average(minutes.slice(-5)), average(minutes.slice(-10)), recent.reduce((s, v, i) => s + v * weights[i], 0) / weights.reduce((a, b) => a + b, 0), f.minutesSD, f.values[7], Number(f.recentTeamChanged), minutes.length];
+  return [average(minutes.slice(-5)), average(minutes.slice(-10)), recent.reduce((s, v, i) => s + v * weights[i], 0) / weights.reduce((a, b) => a + b, 0), f.minutesSD, f.values[7], Number(laggedTeamChanged(f)), minutes.length];
 };
 export function minuteCenter(f: FeatureSet) { const v = minuteVector(f); return .5 * v[2] + .3 * v[0] + .2 * v[1]; }
 export interface TrainingExample { row: RetainedRow; f: FeatureSet; y: number; minutes: number }
@@ -74,7 +77,7 @@ export function m1Minutes(f: FeatureSet, a: M1Artifact, center = minuteCenter(f)
   // Common minutes scenarios are reused across props. A lagged role-shift
   // sensitivity widens uncertainty; it is not a validated injury response.
   own.forEach(m => add(center + (m - ownCenter) * (1 + change / 15), ownWeight / own.length));
-  pool.forEach(r => add(center + r * (f.recentTeamChanged ? 1.25 : 1), (1 - ownWeight) / pool.length));
+  pool.forEach(r => add(center + r * (laggedTeamChanged(f) ? 1.25 : 1), (1 - ownWeight) / pool.length));
   summary(p); return p;
 }
 export function predictM1(f: FeatureSet, a: M1Artifact, options: { poisson?: boolean; attempts?: boolean; minuteCenter?: number; minutesPMF?: number[] } = {}) {
