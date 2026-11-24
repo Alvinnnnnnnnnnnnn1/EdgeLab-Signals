@@ -77,13 +77,14 @@ export function m1Minutes(f: FeatureSet, a: M1Artifact, center = minuteCenter(f)
   pool.forEach(r => add(center + r * (f.recentTeamChanged ? 1.25 : 1), (1 - ownWeight) / pool.length));
   summary(p); return p;
 }
-export function predictM1(f: FeatureSet, a: M1Artifact, options: { poisson?: boolean; attempts?: boolean; minuteCenter?: number } = {}) {
+export function predictM1(f: FeatureSet, a: M1Artifact, options: { poisson?: boolean; attempts?: boolean; minuteCenter?: number; minutesPMF?: number[] } = {}) {
   assertArtifact(a);
   if (f.history.length === 0 || ms(f.cutoff) < ms(a.trainingCutoff)) throw Error('MODEL_NOT_AVAILABLE_AT_CUTOFF');
   const prior = a.priors[f.prop], b = roleBand(f.minutes), history = f.history.slice(-60), weights = history.map((_, i) => 2 ** (-(history.length - 1 - i) / 10));
   const exposure = history.reduce((s, r, i) => s + r.log.minutes! * weights[i], 0), total = history.reduce((s, r, i) => s + r.log.stats[f.prop]! * weights[i], 0);
   const alpha = total + prior.priorMinutes * a.roleRates[f.prop][b], beta = exposure + prior.priorMinutes, rate = alpha / beta;
-  const minutes = m1Minutes(f, a, options.minuteCenter), center = summary(minutes).mean, pmf = new Array<number>(501).fill(0);
+  const minutes = options.minutesPMF ?? m1Minutes(f, a, options.minuteCenter), center = summary(minutes).mean, pmf = new Array<number>(501).fill(0);
+  if (minutes[0] !== 0 || minutes.some((w, m) => w > 0 && m > 75)) throw Error('POSITIVE_MINUTES_SUPPORT_REQUIRED');
   const useAttempts = options.attempts === true && f.prop === 'threes' && prior.attemptRate !== null && prior.makeRate !== null && history.every(r => r.metadata.threeAttempts !== null);
   if (options.attempts && !useAttempts) return null;
   const allAttempts = useAttempts ? history.reduce((s, r) => s + r.metadata.threeAttempts!, 0) : 0;
