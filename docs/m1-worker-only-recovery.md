@@ -1,0 +1,7 @@
+# Isolated M1 worker recovery
+
+The final P0 owner instruction authorises a narrowly scoped independent startup if equivalent protection is demonstrated. isolatedWorkerGate applies only to the cached, physically read-only source reader and separate journal worker. Source and market owners are neither stopped nor replaced. The existing per-cycle trialIdle gate, journal fencing, source context checks, protocol and model pins remain unchanged. It rejects a live M1 owner, shared source/journal, pending paid requests, uncertain delivery and imminent market work. Deployment additionally verifies no M1 process, pinned code/artifacts/configuration/protection, fresh online backups and unchanged other-service identities.
+
+Focused validation passed TypeScript and17 tests, including a concurrent WAL writer while the source reader holds a consistent snapshot; immutable incumbent lease preservation; and owner/request/delivery/deadline rejection. The unchanged repair reuses its prior419-test/build and12-cycle detached memory validation. Runtime verification still requires165 awake seconds, repeated cycles, memory/forecast evidence and preservation checks.
+
+Rollback stops only the exact new M1 LaunchAgent, verifies exit and natural owner release, and retains all journal appends. It must not restore the old crash loop or restore a database backup over production. Source and comparator remain running. This path does not authorise market/service cutovers or spending.
