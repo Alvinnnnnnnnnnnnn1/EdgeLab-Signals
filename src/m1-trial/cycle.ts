@@ -41,7 +41,7 @@ export function generationFeatures(rows:ReturnType<typeof retainedRows>,at:strin
 }
 export class TrialForecaster {
   private epoch=''; private rows:ReturnType<typeof retainedRows>=[]; private get:ReturnType<typeof preparedFeatures>|null=null;
-  private attempted=new Map<string,string>();private cursor='';private fixtureHolds=new Map<string,string>();
+  private attempted=new Map<string,string>();private cursor='';private urgentTurn=true;private fixtureHolds=new Map<string,string>();
   constructor(private protocol:TrialProtocol,private model:M1Artifact,private hybrid:any,private journal:EngineeringJournal,private clock=()=>new Date().toISOString()){}
   cycle(s:Store,budgetMs=2000,maxRecords=4){
     const began=performance.now(),at=this.clock();if(!trialWorkReady(s,at))return{state:'YIELDED_TO_SOURCE_OR_MARKETS',inserted:0,networkRequests:0};
@@ -52,7 +52,11 @@ export class TrialForecaster {
       if(!this.get||epoch!==this.epoch){this.rows=retainedRows(s,at);this.get=generationFeatures(this.rows,at);this.epoch=epoch;this.attempted.clear();}
       const rowRefs=new Map(this.rows.map(r=>[r.log,r.ref]));
       const models=s.db.prepare('SELECT body FROM research_models ORDER BY at,id').all().map(r=>JSON.parse(String(r.body))),inferenceStart=performance.now(),contexts=new Map<string,ReturnType<typeof trialContext>>();
-      let fixtures=upcomingFixtures(s,at);const imminent=fixtures.filter(f=>ms(f.event.startsAt)-ms(at)<=90*60000);if(imminent.length)fixtures=imminent;
+      let fixtures=upcomingFixtures(s,at);const imminent=fixtures.filter(f=>ms(f.event.startsAt)-ms(at)<=120*60000);
+      // Give the earliest stage thirty minutes of preparation before T-90,
+      // while every alternate bounded batch still advances the whole slate.
+      if(imminent.length&&this.urgentTurn)fixtures=imminent.slice(0,1);
+      this.urgentTurn=!this.urgentTurn;
       // A fixture-level source failure blocks every target in that fixture.
       // Check once and retain one hold per unchanged evidence fingerprint;
       // repeated idle ticks must not manufacture millions of identical holds.
