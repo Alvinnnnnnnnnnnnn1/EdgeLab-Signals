@@ -67,7 +67,14 @@ export class TrialForecaster {
           try{
             if(!checkedFixtures.has(fixture.event.id)){fixtureProof(s,fixture.event,fixture.source,now);checkedFixtures.add(fixture.event.id);}
             const contextKey=hash([fixture.event,player.playerId]);let context=contexts.get(contextKey);if(!context){rosterProof(s,player,now);context=trialContext(s,fixture.event,player.playerId,player.teamId,now);contexts.set(contextKey,context);}const stamp=context.hash;
-            if(this.attempted.get(key)===stamp)continue;this.attempted.set(key,stamp);examined++;
+            if(this.attempted.get(key)===stamp)continue;this.attempted.set(key,stamp);
+            // Restart catch-up must not recompute unchanged immutable wrappers.
+            // Current source semantics (including history) must match exactly.
+            if(prop!=='threes'){
+              const ready=this.journal.db.prepare("SELECT json_extract(body,'$.forecast.inputs.contextHash') context FROM m1_trial_ready WHERE protocol_id=? AND event_id=? AND player_id=? AND prop=? AND at<=? ORDER BY at DESC,id DESC LIMIT 1").get(this.protocol.id,fixture.event.id,player.playerId,prop,now);
+              if(ready?.context===stamp)continue;
+            }
+            examined++;
             const f=this.get!({event:fixture.event,...player},prop,fixture.event.startsAt);if(!f)throw Error('INSUFFICIENT_KNOWN_COMPLETED_HISTORY');f.cutoff=now;
             // Verify target outcome and all later receipt revisions remain outside.
             const refs=[...new Map([...f.history,...f.leagueHistory,...f.opportunities].map(r=>{const ref=rowRefs.get(r.log);if(!ref||r.log.event.id===fixture.event.id||knownAt(r.log)>=ms(now))throw Error('FUTURE_OR_TARGET_FEATURE');return[ref.id,{...ref,knownAt:new Date(knownAt(r.log)).toISOString()}];})).values()].sort((a,b)=>a.id.localeCompare(b.id));

@@ -35,3 +35,5 @@ test('retained price waits only for known missing forecasts inside original quot
 });
 
 test('diagnostic failure keeps exit cause with bounded redacted stderr',async()=>{const {diagnosticFailure}=await import('../src/suggestions/worker');const x=diagnosticFailure(null,'SIGTERM','x'.repeat(9000)+' Error: database full SECRET-VALUE',['SECRET-VALUE']);assert.equal(x.signal,'SIGTERM');assert.equal(x.code,null);assert.ok(x.stderr.length<=2048);assert.match(x.stderr,/database full/);assert.ok(!x.stderr.includes('SECRET-VALUE'));assert.match(x.stderr,/redacted/);});
+
+test('diagnostic forecast stream excludes future archives and keeps the exact ended cohort',async()=>{const {completedForecasts}=await import('../src/suggestions/recurring');const d=fixture();try{assert.equal([...completedForecasts(d.store,d.clock())].length,0);const cutoff=new Date(Date.parse(d.event.startsAt)+1000).toISOString();const rows=[...completedForecasts(d.store,cutoff)];assert.deepEqual(rows.map(x=>x.id).sort(),d.fs.map(x=>x.id).sort());}finally{d.close();}});

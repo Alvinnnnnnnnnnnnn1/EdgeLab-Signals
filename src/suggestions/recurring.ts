@@ -2,6 +2,7 @@ import{slatePlan}from'../multi-bookmaker/planner';
 import {runMultiStage,multiClaimed,multiTarget} from '../multi-bookmaker/runtime';
 import {marketForecasts} from '../production/router';
 import {Store} from '../core/store';
+import{EfficientStore}from'../research/reliability/store';
 import {hash,ms,nowISO,type Event,type Receipt,type Terms,type Quote} from '../core/domain';
 import type {Config} from '../core/config';
 import type {Fetcher} from '../providers/http';
@@ -32,9 +33,12 @@ export function seedRecurringJobs(store:Store,at:string,earlyFixtureId?:string){
 }
 function termsEvidence(store:Store,at:string){const terms=store.get<{terms:Terms[]}>('suggestions:terms')?.terms;if(!terms||terms.length!==4)throw new Error('SPORTSBET_TERMS_MISSING');for(const t of terms){retained(store,t.source,at);if(ms(at)-ms(t.source.retrievedAt)>30*86400000)throw new Error('SPORTSBET_TERMS_STALE');}return terms;}
 export function evaluationInputVersion(store:Store){return hash([store.db.prepare('SELECT max(rowid) AS n FROM logs').get(),store.db.prepare('SELECT count(*) AS n FROM experimental_forecasts').get(),store.db.prepare('SELECT count(*) AS n FROM experimental_candidates').get()]);}
+export function* completedForecasts(store:Store,at:string){
+ for(const row of store.db.prepare("SELECT body FROM experimental_forecasts WHERE json_extract(body,'$.event.startsAt')<? ORDER BY at,id").iterate(at))yield JSON.parse(String(row.body));
+}
 export function reconcileHypothetical(store:Store,at:string){
   const settlement=settleSuggestions(store,at),version=evaluationInputVersion(store);
-  if(store.get('recurring:evaluation-version')!==version){try{const report=scoreExperimentalForecasts(store,at);store.set('recurring:evaluation-version',version);store.set('recurring:evaluation',{at,report});}catch{store.set('recurring:evaluation-error',{at,reason:'BACKEND_EVALUATION_FAILED; acquisition and outcome grading remain independent'});}}
+  if(store.get('recurring:evaluation-version')!==version){try{const path=String(store.db.prepare('PRAGMA database_list').all().find(r=>r.name==='main')?.file??''),reader=path?new EfficientStore(path,true):store;let report;try{if(path)reader.db.exec('BEGIN DEFERRED');report=scoreExperimentalForecasts(reader,at,completedForecasts(reader,at));}finally{if(path)reader.close();}store.set('recurring:evaluation-version',version);store.set('recurring:evaluation',{at,report});}catch{store.set('recurring:evaluation-error',{at,reason:'BACKEND_EVALUATION_FAILED; acquisition and outcome grading remain independent'});}}
   return settlement;
 }
 export async function recurringCycle(store:Store,config:Config,policyPath:string,options:{clock?:()=>string;fetcher?:Fetcher;transport?:Telegram;earlyFixtureId?:string}={}){

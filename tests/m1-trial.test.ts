@@ -166,3 +166,5 @@ test('market retains one paid snapshot while M1 refresh finishes, then evaluates
  d.forecaster.cycle(d.store,10000,8);p.tick();assert.equal((await run()).state,'complete');assert.equal(paid,1);
  }finally{d.j.close();p.close();rmSync(d.dir,{recursive:true,force:true});}
 });
+
+test('restarting catch-up skips already-current live wrappers but refreshes after genuine context news',()=>{const d=setup();try{d.forecaster.cycle(d.store,10000,8);const restarted=new TrialForecaster(d.protocol,d.model,d.hybrid,d.j,d.clock),r=restarted.cycle(d.store,10000,8);assert.equal(r.inserted,0);assert.equal(r.examined,1);const later=new Date(Date.parse(d.at)+1000).toISOString();d.setAt(later);const source=d.retain({data:[{player:{id:70},status:'Questionable'}]},'https://api.balldontlie.io/nba/v1/player_injuries',later);d.store.set('live:injury:70',{status:'Questionable',observedAt:later,source});assert.equal(restarted.cycle(d.store,10000,8).inserted,4);}finally{d.closeAll();}});
