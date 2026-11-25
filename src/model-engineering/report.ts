@@ -4,11 +4,25 @@ import { scoreRows, pairedDifference, type ScoredPrediction } from '../research/
 import { thresholds } from '../research/experiment';
 import { summary } from '../research/distributions';
 import { promotionRule } from './journal';
+/** Stream metadata and load only primary bodies. Revisions remain immutable in SQLite. */
+export function firstPredictions(db:DatabaseSync,eventIds?:string[]){
+  const first=new Map<string,any>();let revisions=0;
+  const rows=db.prepare('SELECT id,model_id,event_id,player_id,prop FROM engineering_predictions ORDER BY registered_at,id');
+  const body=db.prepare('SELECT body FROM engineering_predictions WHERE id=?');
+  for(const r of rows.iterate()){
+    if(eventIds&&!eventIds.includes(String(r.event_id)))continue;
+    revisions++;const family=hash([r.model_id,r.event_id,r.player_id,r.prop]);
+    if(first.has(family))continue;
+    const p=JSON.parse(String(body.get(r.id!)!.body)),{id,bodyHash,...record}=p;
+    if(hash(record)!==bodyHash)throw Error('PREDICTION_BODY_CHANGED');
+    first.set(family,p);
+  }
+  return{first,revisions};
+}
 export function engineeringReport(db: DatabaseSync, eventIds?: string[]) {
-  const predictions = db.prepare('SELECT body FROM engineering_predictions ORDER BY registered_at,id').all().map(r => JSON.parse(String(r.body))).filter(p=>!eventIds||eventIds.includes(p.state.event.id)), first = new Map<string, any>();
+  const {first,revisions}=firstPredictions(db,eventIds);
   const holds: unknown[] = [], groups = new Map<string, { prop: Prop; modelId: string; models: Record<string, ScoredPrediction[]>; market: any[] }>();
   let pending = 0;
-  for (const p of predictions) { const { id, bodyHash, ...body } = p; if (hash(body) !== bodyHash) throw Error('PREDICTION_BODY_CHANGED'); const family = hash([p.artifact.id, p.state.event.id, p.state.playerId, p.prop]); if (!first.has(family)) first.set(family, p); }
   for (const p of first.values()) {
     const latest = db.prepare('SELECT body FROM engineering_checks WHERE prediction_id=? ORDER BY at DESC,rowid DESC LIMIT 1').get(p.id), check = latest ? JSON.parse(String(latest.body)) : null;
     const raw = db.prepare('SELECT body FROM engineering_grades WHERE prediction_id=? ORDER BY at DESC,rowid DESC LIMIT 1').get(p.id), grade = raw ? JSON.parse(String(raw.body)) : null;
@@ -23,7 +37,7 @@ export function engineeringReport(db: DatabaseSync, eventIds?: string[]) {
     if (p.market && !observations.length && grade.market) g.market.push({ ...grade.market, fixture: grade.fixture, date: grade.date });
     groups.set(key, g);
   }
-  return { version: 'engineering-quality/1', lifecycle: 'CHALLENGER_SHADOW_UNPROVEN', registrationRevisions: predictions.length, distinctModelPlayerGameProps: first.size, pending, holds,
+  return { version: 'engineering-quality/1', lifecycle: 'CHALLENGER_SHADOW_UNPROVEN', registrationRevisions: revisions, distinctModelPlayerGameProps: first.size, pending, holds,
     groups: [...groups.values()].map(g => ({ modelId: g.modelId, prop: g.prop, models: Object.fromEntries(Object.entries(g.models).map(([k, rs]) => [k, scoreRows(rs, thresholds.NBA[g.prop])])),
       M1MinusOriginalControlByDate: new Set(g.models.M1.map(r => r.date)).size < 2 ? null : pairedDifference(g.models.M1, g.models.originalControl, thresholds.NBA[g.prop], 2401, 400, 'date'),
       M1MinusEWAByDate: new Set(g.models.M1.map(r => r.date)).size < 2 ? null : pairedDifference(g.models.M1, g.models.ewa, thresholds.NBA[g.prop], 2401, 400, 'date'),
