@@ -20,6 +20,14 @@ export function trialIdle(s:Store,at:string){
   if(s.db.prepare("SELECT id FROM quota WHERE provider='odds' AND outcome='reserved' LIMIT 1").get()||s.get('recurring:uncertain-debit')||s.db.prepare("SELECT id FROM experimental_outbox WHERE state IN ('sending','uncertain') LIMIT 1").get())return false;
   return true;
 }
+/** A physically read-only WAL snapshot cannot mutate source ownership. Source
+ * tasks may continue while this bounded cached reader writes its separate,
+ * token-fenced journal. Acquisition/delivery protection remains mandatory. */
+export function trialWorkReady(s:Store,at:string){
+  if(!(s as Store&{physicalReadOnly?:boolean}).physicalReadOnly)return trialIdle(s,at);
+  if(s.db.prepare("SELECT name FROM leases WHERE name IN ('experimental-cycle','experimental-delivery','multi-slate-research') AND expires_at>? LIMIT 1").get(at))return false;
+  return !s.db.prepare("SELECT id FROM quota WHERE provider='odds' AND outcome='reserved' LIMIT 1").get()&&!s.get('recurring:uncertain-debit')&&!s.db.prepare("SELECT id FROM experimental_outbox WHERE state IN ('sending','uncertain') LIMIT 1").get();
+}
 /** The statistical implementation stays frozen. Two clocks are explicit:
  * receipts/final availability are filtered at actual generation; target tip is
  * used only to calculate scheduled rest and exclude target-day outcomes. */
@@ -36,7 +44,7 @@ export class TrialForecaster {
   private attempted=new Map<string,string>();private cursor='';private fixtureHolds=new Map<string,string>();
   constructor(private protocol:TrialProtocol,private model:M1Artifact,private hybrid:any,private journal:EngineeringJournal,private clock=()=>new Date().toISOString()){}
   cycle(s:Store,budgetMs=2000,maxRecords=4){
-    const began=performance.now(),at=this.clock();if(!trialIdle(s,at))return{state:'YIELDED_TO_SOURCE_OR_MARKETS',inserted:0,networkRequests:0};
+    const began=performance.now(),at=this.clock();if(!trialWorkReady(s,at))return{state:'YIELDED_TO_SOURCE_OR_MARKETS',inserted:0,networkRequests:0};
     if(budgetMs<100||budgetMs>10000||maxRecords<1||maxRecords>8)throw Error('BOUNDED_TRIAL_BATCH_REQUIRED');
     let inserted=0,examined=0;const holds:any[]=[];
     s.db.exec('BEGIN DEFERRED');try{

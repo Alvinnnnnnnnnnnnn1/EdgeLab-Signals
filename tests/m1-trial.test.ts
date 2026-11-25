@@ -12,7 +12,7 @@ import { trialContext,assertTrialFreshness } from '../src/m1-trial/context';
 import { TRIAL_VERSION,trialRouting,trialFreshness,reviewWindow,melbourneMidnight,assertProtocol,type TrialProtocol } from '../src/m1-trial/contracts';
 import { trialCodeHash,trialRoot } from '../src/m1-trial/code';
 import { installTrial } from '../src/m1-trial/journal';
-import { TrialForecaster,generationFeatures,trialIdle } from '../src/m1-trial/cycle';
+import { TrialForecaster,generationFeatures,trialIdle,trialWorkReady } from '../src/m1-trial/cycle';
 import { productionRouting,legacyProductionRouting } from '../src/production/router';
 import { trialReview } from '../src/m1-trial/review';
 import { drainTrialRollback } from '../src/m1-trial/rollback';
@@ -140,4 +140,19 @@ test('isolated issued recommendations retain the routed M1 PMF and source eviden
   assert.equal(rankAndIssue(d.store,d.config,d.quotes,d.terms,d.at,d.clock).issued,0);
   assert.ok((await dispatchSuggestions(d.store,d.config,d.transport,d.clock)).accepted>0);const sent=d.sends();assert.equal((await dispatchSuggestions(d.store,d.config,d.transport,d.clock)).accepted,0);assert.equal(d.sends(),sent);
  }finally{d.closeAll();}
+});
+
+test('physical read-only forecasting progresses during source ownership without mutating source; delivery still blocks',async()=>{
+ const d=setup();let ro:EfficientStore|undefined;
+ try{
+  const path=d.dir+'/source.sqlite';await backup(d.store.db,path);ro=new EfficientStore(path,true);
+  const {DatabaseSync}=await import('node:sqlite');const writer=new DatabaseSync(path);writer.exec('PRAGMA journal_mode=WAL');
+  writer.prepare('INSERT INTO leases VALUES (?,?,?)').run('reliable-source-task','SOURCE-OWNER',new Date(Date.parse(d.at)+60000).toISOString());
+  assert.equal(trialIdle(ro,d.at),false);assert.equal(trialWorkReady(ro,d.at),true);
+  const result=d.forecaster.cycle(ro,10000,8);assert.equal(result.inserted,4,JSON.stringify(result));
+  assert.equal(writer.prepare("SELECT token FROM leases WHERE name='reliable-source-task'").get()!.token,'SOURCE-OWNER');
+  assert.throws(()=>ro!.db.exec('DELETE FROM leases'),/readonly/i);
+  writer.prepare('INSERT INTO leases VALUES (?,?,?)').run('experimental-cycle','MARKET-OWNER',new Date(Date.parse(d.at)+60000).toISOString());
+  assert.equal(trialWorkReady(ro,d.at),false);assert.equal(d.forecaster.cycle(ro,10000,8).inserted,0);writer.close();
+ }finally{ro?.close();d.closeAll();}
 });
