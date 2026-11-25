@@ -7,6 +7,10 @@ import {nowISO,ms} from '../core/domain';
 import {spawn,type ChildProcess} from 'node:child_process';
 import {recurringCycle,evaluationInputVersion} from './recurring';
 
+export function diagnosticFailure(code:number|null,signal:string|null,stderr:string,secrets=Object.values(process.env).filter((v):v is string=>!!v)){
+ for(const secret of secrets)if(secret.length>=6)stderr=stderr.replaceAll(secret,'[redacted]');
+ return{state:'diagnostics_process_stopped',code,signal,stderr:stderr.slice(-2048)};
+}
 function log(value:unknown){mkdirSync('.local/logs',{recursive:true,mode:0o700});const path='.local/logs/markets.jsonl';if(existsSync(path)&&statSync(path).size>1000000)renameSync(path,`${path}.1`);appendFileSync(path,JSON.stringify(value)+'\n',{mode:0o600});}
 export async function recurringWorker(store:Store,readConfig:()=>Config,policyPath:string,signal:AbortSignal){
   const lease=store.acquire('recurring-market-worker',nowISO(),150);if(!lease)throw new Error('A recurring market worker already owns this database');
@@ -23,10 +27,11 @@ export async function recurringWorker(store:Store,readConfig:()=>Config,policyPa
     const research:ReturnType<typeof nextSlateResearch>=config.multiBookmaker.codeEnabled&&config.operatingMode!=='disabled'&&(!imminent||researchRequired)&&!signal.aborted&&!diagnostics?nextSlateResearch(store,nowISO()):null;
     if(research){const slot=store.acquire('multi-slate-research',nowISO(),30);if(slot){const database=String(store.db.prepare('PRAGMA database_list').all().find(r=>r.name==='main')!.file),child:ChildProcess=spawn(process.execPath,['--env-file-if-exists=.env.local','--import','tsx',fileURLToPath(new URL('../multi-bookmaker/research-child.ts',import.meta.url)),database,research.date,lease,slot],{cwd:process.cwd(),env:process.env,stdio:'ignore'});diagnostics=child;childKind='research';const timer=setTimeout(()=>child.kill('SIGTERM'),10000),done=()=>{clearTimeout(timer);store.release('multi-slate-research',slot);if(diagnostics===child){diagnostics=null;childKind=null;}};child.once('error',done);child.once('exit',done);}}
     if(config.operatingMode!=='disabled'&&!imminent&&!signal.aborted&&!diagnostics&&Date.now()-lastDiagnosticAttempt>300000&&store.get('recurring:evaluation-version')!==evaluationInputVersion(store)){
-      lastDiagnosticAttempt=Date.now();const child=spawn(process.execPath,['--env-file-if-exists=.env.local','--import','tsx','src/research/cli.ts','recurring-grade'],{cwd:process.cwd(),env:process.env,stdio:'ignore'});diagnostics=child;childKind='analytics';
+      lastDiagnosticAttempt=Date.now();let stderr='';const child=spawn(process.execPath,['--env-file-if-exists=.env.local','--import','tsx',fileURLToPath(new URL('../research/cli.ts',import.meta.url)),'recurring-grade'],{cwd:process.cwd(),env:process.env,stdio:['ignore','ignore','pipe']});diagnostics=child;childKind='analytics';
+      child.stderr?.on('data',chunk=>{stderr=(stderr+String(chunk)).slice(-8192);});
       const timeout=setTimeout(()=>child.kill('SIGTERM'),120000);
       child.once('error',()=>{clearTimeout(timeout);diagnostics=null;childKind=null;log({at:nowISO(),state:'diagnostics_process_error'});});
-      child.once('exit',code=>{clearTimeout(timeout);diagnostics=null;childKind=null;if(code!==0)log({at:nowISO(),state:'diagnostics_process_stopped'});});
+      child.once('exit',(code,signal)=>{clearTimeout(timeout);diagnostics=null;childKind=null;if(code!==0)log({at:nowISO(),...diagnosticFailure(code,signal,stderr,['BALLDONTLIE_API_KEY','ODDS_API_KEY','TELEGRAM_BOT_TOKEN','TELEGRAM_CHAT_ID','BLUEBUBBLES_PASSWORD'].map(k=>process.env[k]).filter((v):v is string=>!!v)),elapsedMs:Date.now()-lastDiagnosticAttempt});});
     }
     store.set('recurring:worker',{at:nowISO(),state:'waiting'});
     await new Promise<void>(resolve=>{const timer=setTimeout(done,60000);function done(){clearTimeout(timer);signal.removeEventListener('abort',done);resolve();}signal.addEventListener('abort',done,{once:true});if(signal.aborted)done();});

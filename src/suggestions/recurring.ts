@@ -2,7 +2,7 @@ import{slatePlan}from'../multi-bookmaker/planner';
 import {runMultiStage,multiClaimed,multiTarget} from '../multi-bookmaker/runtime';
 import {marketForecasts} from '../production/router';
 import {Store} from '../core/store';
-import {hash,ms,nowISO,type Event,type Receipt,type Terms} from '../core/domain';
+import {hash,ms,nowISO,type Event,type Receipt,type Terms,type Quote} from '../core/domain';
 import type {Config} from '../core/config';
 import type {Fetcher} from '../providers/http';
 import {normalizeOdds,marketKeys} from '../providers/odds';
@@ -15,6 +15,12 @@ import {recurringHTTP,recurringBudget,readRecurringPolicy,type RecurringPolicy} 
 
 type Job={id:string;event_id:string;stage:string;due_at:string;deadline:string;state:string;body:string;error:string|null};
 type Body={event:Event;manualVerification?:boolean;retryAt?:string;discovery?:Receipt;oddsId?:string;lastPrice?:Receipt;selection?:unknown;reservationFloor?:number;requestStartedAt?:string};
+/** One retained paid snapshot may wait for an immutable refresh only while
+ * the ORIGINAL quote and stage clocks leave a full scheduler tick. */
+export function retainedPriceWait(quotes:Quote[],missingKnownForecast:boolean,at:string,deadline:string){
+ const until=Math.min(ms(deadline),...quotes.map(q=>Math.min(ms(q.expiresAt),ms(q.quotedAt)+180000,ms(q.event.startsAt)-120000)));
+ return missingKnownForecast&&quotes.length>0&&until-ms(at)>60000;
+}
 function setJob(store:Store,job:Job,state:string,body:Body,error:string|null=null){store.db.prepare('UPDATE recurring_market_jobs SET state=?,body=?,error=? WHERE id=?').run(state,JSON.stringify(body),error,job.id);}
 export function seedRecurringJobs(store:Store,at:string,earlyFixtureId?:string){
   for(const fixture of upcomingFixtures(store,at)){
@@ -72,14 +78,22 @@ export async function recurringCycle(store:Store,config:Config,policyPath:string
     fixtureProof(store,current.event,current.source,at);const terms=termsEvidence(store,at);
     if(!experimentalForecasts(store,[body.event.id]).some(f=>hash(f.event)===hash(body.event))){const f=generateExperimentalForecasts(store,body.event.id,at,clock);result.forecasts=f;if(!f.inserted&&!f.existing)throw new Error('INSUFFICIENT_PLAYER_FORECAST_EVIDENCE');}
     const candidates=marketForecasts(store,at,[body.event.id]).filter(f=>hash(f.event)===hash(body.event)&&f.n>=10&&f.currentSeasonGames>=5&&f.expectedMinutes>=18&&f.minutesSD<=6&&!f.teamChanged);
-    if(!candidates.some(f=>{try{currentPlayerEvidence(store,f,at);return true;}catch{return false;}}))throw new Error('INSUFFICIENT_CURRENT_PLAYER_EVIDENCE');
+    if(!body.lastPrice&&!candidates.some(f=>{try{currentPlayerEvidence(store,f,at);return true;}catch{return false;}}))throw new Error('INSUFFICIENT_CURRENT_PLAYER_EVIDENCE');
     const finishObservation=(receipt:Receipt,raw:unknown)=>{
       const registry=buildSportsbetRegistry(store,raw as Parameters<typeof buildSportsbetRegistry>[1],body.event.id,body.discovery!,clock()),normalized=normalizeOdds(raw,receipt,registry,terms,'sportsbet',true);
+      body.lastPrice=receipt;
+      if(store.get<any>('production:m1-trial')?.enabled){
+        const current=marketForecasts(store,clock(),[body.event.id]);
+        const missing=normalized.quotes.some(q=>q.prop!=='threes'&&!current.some(f=>f.event.id===q.event.id&&f.playerId===q.playerId&&f.prop===q.prop)&&!!store.db.prepare('SELECT id FROM experimental_forecasts WHERE event_id=? AND player_id=? AND prop=? LIMIT 1').get(q.event.id,q.playerId,q.prop));
+        if(retainedPriceWait(normalized.quotes,missing,clock(),selected!.deadline)){
+          body.retryAt=new Date(ms(clock())+5000).toISOString();setJob(store,selected!,'observed',body,'M1_REFRESH_IN_PROGRESS_RETAINED_PRICE');result.state='forecast_refresh_pending';return;
+        }
+      }
       const selection=rankAndIssue(store,config,normalized.quotes,terms,clock(),clock);body.lastPrice=receipt;body.selection=selection;
       store.set('suggestions:last-market',{at:clock(),source:receipt,quotes:normalized.quotes.length,exclusions:normalized.exclusions,bookmaker:'sportsbet'});
       setJob(store,selected!,'complete',body,normalized.quotes.length?null:'NO_EXACT_CURRENT_MARKETS');result.selection=selection;result.state='complete';
     };
-    if(selected.state==='observed'&&body.lastPrice){retained(store,body.lastPrice,at);const raw=JSON.parse((store.db.prepare('SELECT body FROM receipts WHERE hash=?').get(body.lastPrice.hash) as {body:string}).body);finishObservation(body.lastPrice,raw);return result;}
+    if(body.lastPrice){retained(store,body.lastPrice,at);const raw=JSON.parse((store.db.prepare('SELECT body FROM receipts WHERE hash=?').get(body.lastPrice.hash) as {body:string}).body);finishObservation(body.lastPrice,raw);return result;}
     const recent=store.db.prepare("SELECT max(at) AS at FROM quota WHERE provider='odds'").get() as {at:string|null};
     if(recent.at&&ms(at)-ms(recent.at)<config.providers.odds.minIntervalSeconds*1000)return Object.assign(result,{state:'cooldown'});
     let budget:ReturnType<typeof recurringBudget>;

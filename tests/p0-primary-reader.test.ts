@@ -25,3 +25,5 @@ test('lease contention waits without replacement, supports shutdown and surfaces
  let stopped=false;assert.equal(await awaitTrialOwner(()=>{throw Error('M1_TRIAL_ALREADY_OWNED');},()=>stopped,async()=>{stopped=true;}),false);
  await assert.rejects(awaitTrialOwner(()=>{throw Error('SQLITE_FAILURE');},()=>false,async()=>{}),/SQLITE_FAILURE/);
 });
+
+test('forecast backlog limits competing grading without suppressing eventual catch-up',async()=>{const {trialGradeLimit}=await import('../src/m1-trial/service');assert.equal(trialGradeLimit({state:'YIELDED'}),5);assert.equal(trialGradeLimit({state:'COMPLETE'}),50);});

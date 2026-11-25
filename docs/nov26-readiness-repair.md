@@ -1,0 +1,11 @@
+# 26 November operational readiness repair
+
+Statistical source/artifact, calibration, qualifier, exposure, account limits and trial boundaries remain frozen. The read-only M1 worker can process consistent snapshots during cached source tasks; forecast batches take priority over grading (five grades while catching up, fifty when complete). Existing primary-registration reporting and append-only final revisions remain intact.
+
+The Sportsbet stage retains its exact already-paid receipt while known M1 outputs refresh. It retries only inside original quote freshness and stage cutoffs, then completes with real eligible outputs or holds. It never repeats a paid request to recover that snapshot. A complete mocked M1-stage regression proves one paid request across refresh/retry. Budget protection remains unchanged: insufficient T−90 funding may be intentionally held to protect T−20; no budget increase or guaranteed T−90 coverage is implied.
+
+Diagnostics resolve the CLI against the loaded release rather than the unrelated original checkout. Bounded stderr, exit code, signal and elapsed time are recorded with credential redaction. Actual live completion must still be observed.
+
+The market CODE-only replacement guard requires the old market process and children to exit and its lease to release naturally. No acquisition/delivery/debit or imminent market/source job may exist; source heartbeat must be fresh and no substantive source job assigned. An unassigned cached supervisor lease may overlap, as during ordinary source/market operation, without cancelling or replacing that source owner. Schema, model, source policy and qualifier files must be unchanged. This is not a source/market statistical cutover or source pause. Fresh backups, integrity checks, frozen pins, supplemental protection, exact process identity and165 awake seconds remain mandatory. Rollback restores only prior same-protocol market code after safe stop, without database restoration or changing M1 activation.
+
+Validation: TypeScript,424-test full suite/build passed for application changes; subsequent30 focused tests include the retained-price end-to-end scenario and code-only market guard. The added guard does not participate in statistical inference.

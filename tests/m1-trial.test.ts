@@ -156,3 +156,13 @@ test('physical read-only forecasting progresses during source ownership without 
   assert.equal(trialWorkReady(ro,d.at),false);assert.equal(d.forecaster.cycle(ro,10000,8).inserted,0);writer.close();
  }finally{ro?.close();d.closeAll();}
 });
+
+test('market retains one paid snapshot while M1 refresh finishes, then evaluates it without another paid call',async()=>{
+ const {policyFixture}=await import('./support/recurring-fixture'),{recurringCycle}=await import('../src/suggestions/recurring');const d=setup(20),p=policyFixture(d.store);let used=32,paid=0;
+ d.store.set('production:m1-trial',d.marker);p.setAt(d.at);
+ const fetcher=async(input:string|URL)=>{const u=new URL(input),price=u.pathname.endsWith('/odds');if(price){used+=4;paid++;}return Response.json(price?{...d.rawOdds,bookmakers:d.rawOdds.bookmakers.map(b=>({...b,markets:b.markets.map(m=>({...m,last_update:p.clock()}))}))}:u.pathname.endsWith('/events')?[{id:d.rawOdds.id,sport_key:d.rawOdds.sport_key,commence_time:d.event.startsAt,home_team:d.event.home,away_team:d.event.away}]:[],{headers:{'x-requests-used':String(used),'x-requests-remaining':String(500-used),'x-requests-last':price?'4':'0'}});};
+ const run=()=>{d.setAt(p.clock());return recurringCycle(d.store,{...d.config,providers:p.config.providers},p.path,{clock:p.clock,fetcher,transport:d.transport});};
+ try{let discovery=await run();if(discovery.state==='account_refreshed'){p.tick();discovery=await run();}assert.equal(discovery.state,'fixture_discovered');p.tick();const wait=await run();assert.equal(wait.state,'forecast_refresh_pending',JSON.stringify(wait));assert.equal(paid,1);assert.equal(d.store.db.prepare("SELECT count(*)n FROM recurring_market_jobs WHERE state='observed'").get()!.n,1);
+ d.forecaster.cycle(d.store,10000,8);p.tick();assert.equal((await run()).state,'complete');assert.equal(paid,1);
+ }finally{d.j.close();p.close();rmSync(d.dir,{recursive:true,force:true});}
+});

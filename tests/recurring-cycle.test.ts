@@ -23,3 +23,15 @@ test('market authorisation expiry and stopped collection do not stop authentic-s
  }finally{p.close();}
 });
 test('quiet-hour early fixtures retain source tasks but do not pay for opportunities that cannot be delivered',async()=>{const d=fixture('2026-11-22T15:00:00Z'),p=policyFixture(d.store);try{p.setAt('2026-11-22T15:40:00Z');d.setAt(p.clock());const result=await recurringCycle(d.store,d.config,p.path,{clock:p.clock,fetcher:async()=>{throw new Error('Quiet hours must make no requests');},transport:d.transport});assert.equal(result.state,'quiet_hours');assert.equal(d.sends(),0);assert.equal(d.store.db.prepare("SELECT count(*) AS n FROM quota WHERE id!='TEST-ONLY-legacy'").get()!.n,0);}finally{p.close();}});
+
+test('retained price waits only for known missing forecasts inside original quote/stage clocks',async()=>{
+ const {retainedPriceWait}=await import('../src/suggestions/recurring');const d=fixture();
+ try{const at=d.clock(),deadline=new Date(Date.parse(at)+600000).toISOString(),q={...d.quotes[0],quotedAt:at,expiresAt:new Date(Date.parse(at)+180000).toISOString()};
+ assert.equal(retainedPriceWait([q],true,at,deadline),true);assert.equal(retainedPriceWait([q],false,at,deadline),false);
+ assert.equal(retainedPriceWait([q],true,new Date(Date.parse(at)+120000).toISOString(),deadline),false);
+ assert.equal(retainedPriceWait([q],true,at,new Date(Date.parse(at)+30000).toISOString()),false);
+ assert.equal(retainedPriceWait([],true,at,deadline),false);
+ }finally{d.close();}
+});
+
+test('diagnostic failure keeps exit cause with bounded redacted stderr',async()=>{const {diagnosticFailure}=await import('../src/suggestions/worker');const x=diagnosticFailure(null,'SIGTERM','x'.repeat(9000)+' Error: database full SECRET-VALUE',['SECRET-VALUE']);assert.equal(x.signal,'SIGTERM');assert.equal(x.code,null);assert.ok(x.stderr.length<=2048);assert.match(x.stderr,/database full/);assert.ok(!x.stderr.includes('SECRET-VALUE'));assert.match(x.stderr,/redacted/);});
