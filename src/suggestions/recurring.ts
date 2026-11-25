@@ -34,11 +34,18 @@ export function seedRecurringJobs(store:Store,at:string,earlyFixtureId?:string){
 function termsEvidence(store:Store,at:string){const terms=store.get<{terms:Terms[]}>('suggestions:terms')?.terms;if(!terms||terms.length!==4)throw new Error('SPORTSBET_TERMS_MISSING');for(const t of terms){retained(store,t.source,at);if(ms(at)-ms(t.source.retrievedAt)>30*86400000)throw new Error('SPORTSBET_TERMS_STALE');}return terms;}
 export function evaluationInputVersion(store:Store){return hash([store.db.prepare('SELECT max(rowid) AS n FROM logs').get(),store.db.prepare('SELECT count(*) AS n FROM experimental_forecasts').get(),store.db.prepare('SELECT count(*) AS n FROM experimental_candidates').get()]);}
 export function* completedForecasts(store:Store,at:string){
- for(const row of store.db.prepare("SELECT body FROM experimental_forecasts WHERE json_extract(body,'$.event.startsAt')<? ORDER BY at,id").iterate(at))yield JSON.parse(String(row.body));
+ const body=store.db.prepare("SELECT body FROM experimental_forecasts WHERE id=?");
+ for(const row of store.db.prepare("SELECT id FROM experimental_forecasts WHERE json_extract(body,'$.event.startsAt')<? ORDER BY at,id").iterate(at))yield JSON.parse(String(body.get(row.id!)!.body));
+}
+/** Scoring reads one immutable snapshot; its existing health/report writes
+ * remain on the supplied legitimate writer, never the read-only handle. */
+export function scoringReadView(reader:EfficientStore,owner:Store):Store{
+ const db=new Proxy(reader.db,{get(t,k){if(k==='prepare')return(sql:string)=>/^\s*INSERT OR IGNORE INTO research_grades\b/i.test(sql)?owner.db.prepare(sql):t.prepare(sql);const v=Reflect.get(t,k,t);return typeof v==='function'?v.bind(t):v;}});
+ return new Proxy(reader,{get(t,k){if(k==='db')return db;if(k==='set')return(key:string,value:unknown)=>{if(!key.startsWith('experimental:model-health:'))throw Error('UNEXPECTED_SCORE_WRITE');owner.set(key,value);};const v=Reflect.get(t,k,t);return typeof v==='function'?v.bind(t):v;}});
 }
 export function reconcileHypothetical(store:Store,at:string){
   const settlement=settleSuggestions(store,at),version=evaluationInputVersion(store);
-  if(store.get('recurring:evaluation-version')!==version){try{const path=String(store.db.prepare('PRAGMA database_list').all().find(r=>r.name==='main')?.file??''),reader=path?new EfficientStore(path,true):store;let report;try{if(path)reader.db.exec('BEGIN DEFERRED');report=scoreExperimentalForecasts(reader,at,completedForecasts(reader,at));}finally{if(path)reader.close();}store.set('recurring:evaluation-version',version);store.set('recurring:evaluation',{at,report});}catch{store.set('recurring:evaluation-error',{at,reason:'BACKEND_EVALUATION_FAILED; acquisition and outcome grading remain independent'});}}
+  if(store.get('recurring:evaluation-version')!==version){try{const path=String(store.db.prepare('PRAGMA database_list').all().find(r=>r.name==='main')?.file??''),reader=path?new EfficientStore(path,true):store;let report;try{if(path)reader.db.exec('BEGIN DEFERRED');report=scoreExperimentalForecasts(path?scoringReadView(reader as EfficientStore,store):store,at,completedForecasts(reader,at));}finally{if(path)reader.close();}store.set('recurring:evaluation-version',version);store.set('recurring:evaluation',{at,report});}catch{store.set('recurring:evaluation-error',{at,reason:'BACKEND_EVALUATION_FAILED; acquisition and outcome grading remain independent'});}}
   return settlement;
 }
 export async function recurringCycle(store:Store,config:Config,policyPath:string,options:{clock?:()=>string;fetcher?:Fetcher;transport?:Telegram;earlyFixtureId?:string}={}){
