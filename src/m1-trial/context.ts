@@ -1,3 +1,4 @@
+import{assertV15Freshness}from'../v15/runtime';
 import { hash, ms, type Event, type Receipt } from '../core/domain';
 import type { Store } from '../core/store';
 import type { ExperimentalForecast } from '../suggestions/forecasts';
@@ -20,6 +21,7 @@ export function trialContext(s: Store, event: Event, playerId: string, teamId: s
   return{...context,hash:hash(semantic)};
 }
 export function assertTrialFreshness(s:Store,f:ExperimentalForecast,at:string) {
+  if((f.inputs as any).v15){assertV15Freshness(s,f,at);return;}
   const marker=s.get<any>('production:m1-trial');
   const inputs=f.inputs as typeof f.inputs&{trialId?:string;contextHash?:string};
   if(!marker?.enabled){if(inputs.trialId)throw Error('M1_TRIAL_NO_LONGER_ACTIVE');return;}

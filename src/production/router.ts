@@ -1,3 +1,4 @@
+import{routeV15}from'../v15/runtime';
 import {DatabaseSync} from 'node:sqlite';
 import {resolve} from 'node:path';
 import {hash,ms,type Prop} from '../core/domain';
@@ -49,7 +50,8 @@ export function legacyProductionRouting(store:Store,at:string,eventIds:string[])
  return{at,version:ROUTING_VERSION,forecasts,decisions,counts:{advancedAssists:decisions.filter(d=>d.route==='advanced-assists').length,originalPrecomputed:decisions.filter(d=>d.route==='original-precomputed').length,originalFallbacks:decisions.filter(d=>d.route==='original-fallback').length,sourceBlocked:decisions.filter(d=>/SOURCE/.test(d.reason)).length,artifactMismatch:decisions.filter(d=>/ARTIFACT|HASH|VERSION/.test(d.reason)).length}};
 }
 export function productionForecasts(store:Store,at:string,eventIds:string[]){return productionRouting(store,at,eventIds).forecasts;}
-export function productionRouting(store:Store,at:string,eventIds:string[]){const legacy=legacyProductionRouting(store,at,eventIds),marker=store.get<TrialMarker>('production:m1-trial');return marker?.enabled?routeTrial(store,at,eventIds,legacy.forecasts,marker):legacy;}
+export function incumbentRouting(store:Store,at:string,eventIds:string[]){const legacy=legacyProductionRouting(store,at,eventIds),marker=store.get<TrialMarker>('production:m1-trial');return marker?.enabled?routeTrial(store,at,eventIds,legacy.forecasts,marker):legacy;}
+export function productionRouting(store:Store,at:string,eventIds:string[]){return routeV15(store,at,eventIds,incumbentRouting(store,at,eventIds));}
 /** Called only by the market writer; counts describe the latest actual lookup,
  * not unique issues or invented successful advanced activations. */
 export function marketForecasts(store:Store,at:string,eventIds:string[]){const r=productionRouting(store,at,eventIds);if(store.get<RoutingPlan>('production:router')?.enabled||store.get<TrialMarker>('production:m1-trial')?.enabled)store.set('production:routing-latest',{at:r.at,version:r.version,counts:r.counts,decisions:r.decisions});return r.forecasts;}
