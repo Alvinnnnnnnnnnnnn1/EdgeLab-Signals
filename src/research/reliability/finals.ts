@@ -6,7 +6,14 @@ import {bdlEvent,normalizeBDLStats} from '../../providers/balldontlie';
 
 interface Progress {phase:'fixture'|'stats';nextAt:string;cursor?:number;seen?:number[];fixture?:unknown;source?:Receipt;lastCompleteAt?:string;reason?:string;}
 export function registeredEvents(store:Store){
- const result=new Map<string,Event>();for(const t of ['shadow_forecasts','prospective_forecasts','experimental_forecasts'])for(const r of store.db.prepare(`SELECT event_id,json_extract(body,'$.event') AS event FROM ${t} GROUP BY event_id`).all()as{event_id:string;event:string}[])if(r.event)result.set(r.event_id,JSON.parse(r.event));
+ // GROUP BY must sort identities, never multi-megabyte forecast bodies. Read
+ // one canonical registration per event by rowid after the bounded grouping.
+ const result=new Map<string,Event>();for(const t of ['shadow_forecasts','prospective_forecasts','experimental_forecasts']){
+  const body=store.db.prepare(`SELECT json_extract(body,'$.event') AS event FROM ${t} WHERE rowid=?`);
+  for(const r of store.db.prepare(`SELECT event_id,min(rowid) AS first_row FROM ${t} GROUP BY event_id`).iterate()){
+   const record=body.get(r.first_row!)as{event:string}|undefined;if(record?.event)result.set(String(r.event_id),JSON.parse(record.event));
+  }
+ }
  for(const r of store.db.prepare("SELECT json_extract(body,'$.quote.event') AS event FROM experimental_suggestions").all()as{event:string}[])if(r.event){const e=JSON.parse(r.event)as Event;result.set(e.id,e);}return[...result.values()];
 }
 export function finalSchedule(store:Store,at:string){const pending=new Set((store.db.prepare('SELECT json_extract(body,\'$.quote.event.id\') AS event FROM experimental_suggestions WHERE id NOT IN (SELECT signal_id FROM experimental_grades)').all()as{event:string}[]).map(r=>r.event));return registeredEvents(store).filter(e=>e.league==='NBA').map(event=>{
