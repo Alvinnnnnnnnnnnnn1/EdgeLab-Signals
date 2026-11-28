@@ -59,6 +59,7 @@ export class EngineeringJournal {
       CREATE TABLE IF NOT EXISTS engineering_models(id TEXT PRIMARY KEY,registered_at TEXT NOT NULL,body TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS engineering_manifests(id TEXT PRIMARY KEY,body BLOB NOT NULL);
       CREATE TABLE IF NOT EXISTS engineering_predictions(id TEXT PRIMARY KEY,model_id TEXT NOT NULL REFERENCES engineering_models(id),registered_at TEXT NOT NULL,event_id TEXT NOT NULL,player_id TEXT NOT NULL,prop TEXT NOT NULL,as_of TEXT NOT NULL,body TEXT NOT NULL,UNIQUE(model_id,event_id,player_id,prop,as_of));
+      CREATE INDEX IF NOT EXISTS engineering_grade_scan ON engineering_predictions(registered_at,id);
       CREATE TABLE IF NOT EXISTS engineering_grades(id TEXT PRIMARY KEY,prediction_id TEXT NOT NULL REFERENCES engineering_predictions(id),at TEXT NOT NULL,body TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS engineering_holds(id TEXT PRIMARY KEY,at TEXT NOT NULL,body TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS engineering_markets(id TEXT PRIMARY KEY,prediction_id TEXT NOT NULL REFERENCES engineering_predictions(id),at TEXT NOT NULL,body TEXT NOT NULL);
