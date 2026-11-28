@@ -136,11 +136,12 @@ export class EngineeringJournal {
     this.active(); const at = this.clock(), results: unknown[] = [];
     if (!Number.isInteger(limit) || limit < 1 || limit > 1000) throw Error('BOUNDED_GRADE_BATCH_REQUIRED');
     const cursorRow = this.db.prepare("SELECT value FROM engineering_runtime WHERE key='gradeCursor'").get(), cursor = cursorRow ? JSON.parse(String(cursorRow.value)) : { at: '', id: '' };
-    let batch = this.db.prepare('SELECT id,registered_at,body FROM engineering_predictions WHERE (registered_at,id)>(?,?) ORDER BY registered_at,id LIMIT ?').all(cursor.at, cursor.id, limit);
-    if (!batch.length) batch = this.db.prepare('SELECT id,registered_at,body FROM engineering_predictions ORDER BY registered_at,id LIMIT ?').all(limit);
+    let batch = this.db.prepare('SELECT id,registered_at FROM engineering_predictions WHERE (registered_at,id)>(?,?) ORDER BY registered_at,id LIMIT ?').all(cursor.at, cursor.id, limit);
+    if (!batch.length) batch = this.db.prepare('SELECT id,registered_at FROM engineering_predictions ORDER BY registered_at,id LIMIT ?').all(limit);
     for (const r of batch) {
       this.db.prepare("INSERT INTO engineering_runtime VALUES ('gradeCursor',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").run(JSON.stringify({ at: r.registered_at, id: r.id }));
-      const p = JSON.parse(String(r.body)), { id, bodyHash, ...body } = p;
+      const selected=this.db.prepare('SELECT body FROM engineering_predictions WHERE id=?').get(r.id!);if(!selected)throw Error('IMMUTABLE_GRADING_PREDICTION_MISSING');
+      const p = JSON.parse(String(selected.body)), { id, bodyHash, ...body } = p;
       if (hash(body) !== bodyHash) throw Error('FROZEN_PREDICTION_CHANGED');
       if (ms(p.state.event.startsAt) >= ms(at)) continue;
       const raw = source.db.prepare('SELECT id,body FROM logs WHERE event_id=? AND player_id=? AND observed_at<=? ORDER BY observed_at DESC,rowid DESC LIMIT 1').get(p.state.event.id, p.state.playerId, at);
