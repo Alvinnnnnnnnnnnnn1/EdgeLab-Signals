@@ -1,3 +1,4 @@
+import {liveForecastPriorities} from '../opportunities/priority';
 import { hash, ms, props, type Prop } from '../core/domain';
 import type { Store } from '../core/store';
 import { preparedFeatures } from '../research/features';
@@ -40,6 +41,7 @@ export function generationFeatures(rows:ReturnType<typeof retainedRows>,at:strin
   return ((target,prop)=>get(target,prop,new Date(ms(target.event.startsAt)+86400000).toISOString())) as ReturnType<typeof preparedFeatures>;
 }
 export class TrialForecaster {
+  private priorityTurn=true;private priorityCursor='';
   private epoch=''; private rows:ReturnType<typeof retainedRows>=[]; private get:ReturnType<typeof preparedFeatures>|null=null;
   private attempted=new Map<string,string>();private cursor='';private urgentTurn=true;private fixtureHolds=new Map<string,string>();
   constructor(private protocol:TrialProtocol,private model:M1Artifact,private hybrid:any,private journal:EngineeringJournal,private clock=()=>new Date().toISOString()){}
@@ -61,13 +63,14 @@ export class TrialForecaster {
       // Check once and retain one hold per unchanged evidence fingerprint;
       // repeated idle ticks must not manufacture millions of identical holds.
       fixtures=fixtures.filter(fixture=>{try{fixtureProof(s,fixture.event,fixture.source,this.clock());this.fixtureHolds.delete(fixture.event.id);return true;}catch(e){const reason=(e as Error).message,stamp=hash([fixture.event,fixture.source,reason]),target={eventId:fixture.event.id,scope:'ENTIRE_FIXTURE',sourceHash:fixture.source.hash};holds.push({...target,reason});if(this.fixtureHolds.get(fixture.event.id)!==stamp){this.journal.hold(target,reason);this.fixtureHolds.set(fixture.event.id,stamp);}return false;}});
-      const targets=fixtures.flatMap(fixture=>s.db.prepare("SELECT value FROM meta WHERE key LIKE 'live:roster:%' AND json_extract(value,'$.teamId') IN (?,?) ORDER BY key").all(fixture.event.homeId,fixture.event.awayId).flatMap(r=>{const player=JSON.parse(String(r.value));return props.map(prop=>({fixture,player,prop,key:hash([fixture.event,player.playerId,prop])}));}));
-      const priorIndex=targets.findIndex(t=>t.key===this.cursor),startIndex=priorIndex<0?0:(priorIndex+1)%targets.length;
+      const allTargets=fixtures.flatMap(fixture=>s.db.prepare("SELECT value FROM meta WHERE key LIKE 'live:roster:%' AND json_extract(value,'$.teamId') IN (?,?) ORDER BY key").all(fixture.event.homeId,fixture.event.awayId).flatMap(r=>{const player=JSON.parse(String(r.value));return props.map(prop=>({fixture,player,prop,key:hash([fixture.event,player.playerId,prop])}));}));
+      const requests=liveForecastPriorities(s,at),priced=allTargets.filter(t=>requests.has(t.key)),usePriority=this.priorityTurn&&priced.length>0;this.priorityTurn=!this.priorityTurn;const targets=usePriority?priced:allTargets,activeCursor=usePriority?this.priorityCursor:this.cursor;
+      const priorIndex=targets.findIndex(t=>t.key===activeCursor),startIndex=priorIndex<0?0:(priorIndex+1)%targets.length;
       const checkedFixtures=new Set<string>();
       for(let offset=0;offset<targets.length;offset++){
           const {fixture,player,prop,key}=targets[(startIndex+offset)%targets.length],now=this.clock();
           if(performance.now()-inferenceStart>=budgetMs||examined>=maxRecords)return{state:'YIELDED',inserted,examined,holds,preparationMs:inferenceStart-began,networkRequests:0};
-          this.cursor=key;
+          if(usePriority)this.priorityCursor=key;else this.cursor=key;
           try{
             if(!checkedFixtures.has(fixture.event.id)){fixtureProof(s,fixture.event,fixture.source,now);checkedFixtures.add(fixture.event.id);}
             const contextKey=hash([fixture.event,player.playerId]);let context=contexts.get(contextKey);if(!context){rosterProof(s,player,now);context=trialContext(s,fixture.event,player.playerId,player.teamId,now);contexts.set(contextKey,context);}const stamp=context.hash;

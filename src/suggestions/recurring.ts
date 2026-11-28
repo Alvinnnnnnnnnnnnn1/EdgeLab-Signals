@@ -1,3 +1,4 @@
+import {persistNormalizationExclusions} from '../opportunities/journal';
 import{slatePlan}from'../multi-bookmaker/planner';
 import {runMultiStage,multiClaimed,multiTarget} from '../multi-bookmaker/runtime';
 import {marketForecasts} from '../production/router';
@@ -20,7 +21,11 @@ type Body={event:Event;manualVerification?:boolean;retryAt?:string;discovery?:Re
  * the ORIGINAL quote and stage clocks leave a full scheduler tick. */
 export function retainedPriceWait(quotes:Quote[],missingKnownForecast:boolean,at:string,deadline:string){
  const until=Math.min(ms(deadline),...quotes.map(q=>Math.min(ms(q.expiresAt),ms(q.quotedAt)+180000,ms(q.event.startsAt)-120000)));
- return missingKnownForecast&&quotes.length>0&&until-ms(at)>60000;
+ return missingKnownForecast&&quotes.length>0&&until-ms(at)>5000;
+}
+export function hasForecastHistory(store:Store,q:Quote,at:string){
+ if(store.db.prepare('SELECT id FROM experimental_forecasts WHERE event_id=? AND player_id=? AND prop=? LIMIT 1').get(q.event.id,q.playerId,q.prop))return true;
+ const n=store.db.prepare("SELECT count(DISTINCT event_id)n FROM logs WHERE player_id=? AND observed_at<=? AND event_id!=? AND json_extract(body,'$.final')=1 AND json_extract(body,'$.participated')=1 AND json_extract(body,'$.minutes')>0 AND json_extract(body,'$.event.startsAt')<? AND json_extract(body,'$.stats."+q.prop+"') IS NOT NULL").get(q.playerId,at,q.event.id,at);return Number(n?.n??0)>=10;
 }
 function setJob(store:Store,job:Job,state:string,body:Body,error:string|null=null){store.db.prepare('UPDATE recurring_market_jobs SET state=?,body=?,error=? WHERE id=?').run(state,JSON.stringify(body),error,job.id);}
 export function seedRecurringJobs(store:Store,at:string,earlyFixtureId?:string){
@@ -92,15 +97,13 @@ export async function recurringCycle(store:Store,config:Config,policyPath:string
     if(!body.lastPrice&&!candidates.some(f=>{try{currentPlayerEvidence(store,f,at);return true;}catch{return false;}}))throw new Error('INSUFFICIENT_CURRENT_PLAYER_EVIDENCE');
     const finishObservation=(receipt:Receipt,raw:unknown)=>{
       const registry=buildSportsbetRegistry(store,raw as Parameters<typeof buildSportsbetRegistry>[1],body.event.id,body.discovery!,clock()),normalized=normalizeOdds(raw,receipt,registry,terms,'sportsbet',true);
-      body.lastPrice=receipt;
-      if(store.get<any>('production:m1-trial')?.enabled){
-        const current=marketForecasts(store,clock(),[body.event.id]);
-        const missing=normalized.quotes.some(q=>q.prop!=='threes'&&!current.some(f=>f.event.id===q.event.id&&f.playerId===q.playerId&&f.prop===q.prop)&&!!store.db.prepare('SELECT id FROM experimental_forecasts WHERE event_id=? AND player_id=? AND prop=? LIMIT 1').get(q.event.id,q.playerId,q.prop));
-        if(retainedPriceWait(normalized.quotes,missing,clock(),selected!.deadline)){
-          body.retryAt=new Date(ms(clock())+5000).toISOString();setJob(store,selected!,'observed',body,'M1_REFRESH_IN_PROGRESS_RETAINED_PRICE');result.state='forecast_refresh_pending';return;
-        }
+      body.lastPrice=receipt;persistNormalizationExclusions(store,receipt.hash,normalized.exclusions,{name:'experimental-cycle',token:lease},clock);
+      const current=marketForecasts(store,clock(),[body.event.id]);
+      const missing=normalized.quotes.filter(q=>q.prop!=='threes'&&!current.some(f=>f.event.id===q.event.id&&f.playerId===q.playerId&&f.prop===q.prop)&&hasForecastHistory(store,q,clock())&&ms(q.expiresAt)>ms(clock())+5000);
+      const selection=rankAndIssue(store,config,normalized.quotes,terms,clock(),clock,{name:'experimental-cycle',token:lease});body.selection=selection;
+      if(store.get<any>('production:m1-trial')?.enabled&&retainedPriceWait(missing,missing.length>0,clock(),selected!.deadline)){
+        body.retryAt=new Date(ms(clock())+5000).toISOString();setJob(store,selected!,'observed',body,'M1_REFRESH_IN_PROGRESS_RETAINED_PRICE');result.selection=selection;result.state='forecast_refresh_pending';return;
       }
-      const selection=rankAndIssue(store,config,normalized.quotes,terms,clock(),clock);body.lastPrice=receipt;body.selection=selection;
       store.set('suggestions:last-market',{at:clock(),source:receipt,quotes:normalized.quotes.length,exclusions:normalized.exclusions,bookmaker:'sportsbet'});
       setJob(store,selected!,'complete',body,normalized.quotes.length?null:'NO_EXACT_CURRENT_MARKETS');result.selection=selection;result.state='complete';
     };

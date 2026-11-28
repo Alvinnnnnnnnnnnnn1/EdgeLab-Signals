@@ -13,7 +13,7 @@ export function normalizeOdds(raw: unknown, receipt: Receipt, registry: Registry
   const books = input.bookmakers.filter(b => b.key === bookmaker);
   if (books.length > 1) throw new Error('Duplicate bookmaker identity');
   if (!books.length) exclusions.push({ identity: input.id, reason: 'Requested bookmaker absent; no substitution' });
-  const seen = new Set<string>(), ambiguous = new Set<string>();
+  const seen = new Map<string,string>(), ambiguous = new Set<string>();
   for (const b of books) for (const m of b.markets) {
     const prop = byKey[m.key];
     if (!prop) { exclusions.push({ identity: m.key, reason: 'Unsupported market family or milestone terms' }); continue; }
@@ -21,7 +21,7 @@ export function normalizeOdds(raw: unknown, receipt: Receipt, registry: Registry
       const identity = [input.id, m.key, o.description, o.name, o.point].join(':');
       try {
         if (!o.description || !['Over', 'Under'].includes(o.name) || o.point === undefined || !m.last_update) throw new Error('Missing exact player, line, side or ORIGINAL market timestamp');
-        if (seen.has(identity)) { ambiguous.add(identity); throw new Error('Duplicate/conflicting exact outcome'); } seen.add(identity);
+        const fingerprint=hash([o.price,m.last_update]);if(seen.has(identity)){if(seen.get(identity)===fingerprint){exclusions.push({identity,reason:'Identical captured outcome deduplicated'});continue;}ambiguous.add(identity);throw new Error('Duplicate/conflicting exact outcome');}seen.set(identity,fingerprint);
         const p = exactPlayer(registry, event.id, o.description);
         const exactTerms = terms.filter(t => t.bookmaker === b.key && t.prop === prop && t.league === event.league);
         const q = quoteSchema.parse({ event, playerId: p.playerId, player: p.player, teamId: p.teamId, prop, side: o.name.toLowerCase(), line: o.point, decimalOdds: o.price, bookmaker: b.key,

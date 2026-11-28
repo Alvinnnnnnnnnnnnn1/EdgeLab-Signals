@@ -1,3 +1,5 @@
+import {evaluateOpportunities} from '../opportunities/engine';
+import {persistOpportunityRows,persistOpportunityObservations,type OpportunityOwner} from '../opportunities/journal';
 import {exposureBlock} from './exposure';
 import{hasPlacedFamily}from'./placements';
 import {marketMessage} from '../multi-bookmaker/message';
@@ -47,18 +49,16 @@ function assessOffer(q:Quote,paired:Quote,f:ExperimentalForecast,terms:Terms,at:
   const score=.65*p.win+.2*Math.min(.2,estimatedEV)+.15*Math.min(1,f.n/30)-.2*disagreement;
   return{win:p.win,push:p.push,estimatedEV,conservativeEV,disagreement,score,confidence:'Experimental · limited validation',reasoning:`Estimated ${f.expectedMinutes.toFixed(1)} minutes from ${f.n} earlier complete games; ${f.model} supports this side. Minutes sensitivity and the simple-model comparison retain a positive estimated edge; participation is unconfirmed.`,market};
 }
-export function rankAndIssue(store:Store,config:Config,quotes:Quote[],terms:Terms[],at:string,clock=()=>at){
+export function rankAndIssue(store:Store,config:Config,quotes:Quote[],terms:Terms[],at:string,clock=()=>at,owner?:OpportunityOwner){
   ensureSuggestionFamilies(store);
-  archivePricedCandidates(store,quotes,at);
-  const forecasts=marketForecasts(store,at,[...new Set(quotes.map(q=>q.event.id))]),eligible:{quote:Quote;forecast:ExperimentalForecast;terms:Terms;assessment:ReturnType<typeof assessSuggestion>}[]=[],excluded:{playerId:string;prop:Prop;reason:string}[]=[];
-  for(const q of quotes){try{
-    const matches=forecasts.filter(f=>hash(f.event)===hash(q.event)&&f.playerId===q.playerId&&f.prop===q.prop);if(matches.length!==1)throw new Error('Exact frozen experimental forecast missing/ambiguous');const f=matches[0];
-    const pair=quotes.filter(p=>hash(p.event)===hash(q.event)&&p.playerId===q.playerId&&p.teamId===q.teamId&&p.prop===q.prop&&p.line===q.line&&p.bookmaker===q.bookmaker&&p.termsId===q.termsId&&p.side!==q.side);if(pair.length!==1)throw new Error('Exact opposite-side market missing/ambiguous');
-    const t=terms.filter(t=>t.id===q.termsId);if(t.length!==1)throw new Error('Verified original settlement terms missing');for(const source of [q.source,q.mappingProof.event.source,q.mappingProof.player.source,t[0].source])retained(store,source,at);currentPlayerEvidence(store,f,at);
-    eligible.push({quote:q,forecast:f,terms:t[0],assessment:assessSuggestion(q,pair[0],f,t[0],at)});
-  }catch(e){excluded.push({playerId:q.playerId,prop:q.prop,reason:(e as Error).message});}}
-  eligible.sort((a,b)=>b.assessment.score-a.assessment.score||hash(a.quote).localeCompare(hash(b.quote)));
-  return{at,pricedCandidates:quotes.length,eligible:eligible.length,...issueQualifiedSuggestions(store,config,eligible,at,clock),excluded};
+  persistOpportunityObservations(store,quotes,at,owner,clock);
+  const plan=evaluateOpportunities(store,config,quotes,terms,at);
+  archivePricedCandidates(store,plan.canonical.quotes,at,plan.forecasts);
+  persistOpportunityRows(store,plan.rows,owner,clock);
+  const issued=issueQualifiedSuggestions(store,config,plan.eligible,at,clock);
+  for(const row of plan.rows){const match=issued.ids.map(id=>store.db.prepare('SELECT body FROM experimental_suggestions WHERE id=?').get(id)).find(r=>r&&hash(JSON.parse(String(r.body)).quote)===row.quoteHash);if(match)row.issuedId=JSON.parse(String(match.body)).id;else if(row.classification==='QUALIFIED'){const exposure=issued.exposureSuppressed.find(x=>x.family===row.familyId),reason=exposure?.reason??(!quoteFresh(row.quote,clock(),180,120)?'ORIGINAL_QUOTE_EXPIRED_DURING_EVALUATION':notificationWindow(clock(),row.quote.expiresAt).state!=='ready'?'DELIVERY_WINDOW_NOT_READY':'NOT_ISSUED_BY_UNCHANGED_FAMILY_OR_EXPOSURE_POLICY');row.classification='SUPPRESSED';row.gates.push({code:'ISSUANCE_DISPOSITION',category:'DUPLICATE_CORRELATION_EXPOSURE',pass:false,observed:reason,required:'actual source recommendation transaction'});}}
+  persistOpportunityRows(store,plan.rows,owner,clock);
+  return{at,pricedCandidates:quotes.length,uniqueOpportunities:plan.canonical.quotes.length,duplicateSnapshots:plan.canonical.duplicates.length,eligible:plan.eligible.length,...issued,excluded:plan.rows.filter(r=>r.authorityError).map(r=>({playerId:r.quote.playerId,prop:r.quote.prop,reason:r.authorityError!})),funnel:{watch:plan.rows.filter(r=>r.classification==='WATCH').length,dataHeld:plan.rows.filter(r=>r.classification==='DATA_HOLD').length,suppressed:plan.rows.filter(r=>r.classification==='SUPPRESSED').length}};
 }
 export interface QualifiedSuggestion {quote:Quote;forecast:ExperimentalForecast;terms:Terms;assessment:ReturnType<typeof assessSuggestion>;marketComparison?:MultiEvidence;}
 /** Shared original transaction/outbox/family path. New-book callers must carry
@@ -77,8 +77,8 @@ export function issueQualifiedSuggestions(store:Store,config:Config,eligible:Qua
   return{issued:issued.length,ids:issued.map(s=>s.id),permanentlySuppressed,exposureSuppressed};
 }
 
-export function archivePricedCandidates(store:Store,quotes:Quote[],at:string){
-  const forecasts=marketForecasts(store,at,[...new Set(quotes.map(q=>q.event.id))]);let inserted=0;
+export function archivePricedCandidates(store:Store,quotes:Quote[],at:string,provided?:ExperimentalForecast[]){
+  const forecasts=provided??marketForecasts(store,at,[...new Set(quotes.map(q=>q.event.id))]);let inserted=0;
   for(const raw of quotes){const q=quoteSchema.parse(raw);retained(store,q.source,at);if(ms(at)>=ms(q.event.startsAt)||ms(q.retrievedAt)>=ms(q.event.startsAt)||ms(q.quotedAt)>=ms(q.event.startsAt))continue;
     const matches=forecasts.filter(f=>hash(f.event)===hash(q.event)&&f.playerId===q.playerId&&f.teamId===q.teamId&&f.prop===q.prop&&ms(f.at)<=ms(at)&&f.inputHash===hash(f.inputs)),f=matches.length===1?matches[0]:null,id=hash(['observed-pregame-candidate',q,f?.id??null]);
     let trialQualification:undefined|{state:'ELIGIBLE'|'REJECTED';reason:string|null};

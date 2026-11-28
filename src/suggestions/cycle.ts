@@ -13,6 +13,7 @@ import {protectedSuggestionsHTTP,readSuggestionsGrant} from './allowance';
 import {rankAndIssue,dispatchSuggestions,settleSuggestions,scoreExperimentalForecasts} from './engine';
 
 interface AcquisitionState {phase:'quota'|'events'|'catalogue'|'prices'|'refresh'|'complete'|'blocked';oddsId?:string;discovery?:Receipt;catalogue?:Receipt;initialPrices?:Receipt;lastPrices?:Receipt;nextAt:string;coverage?:unknown;error?:string;}
+export const conservativePlayerName=(name:string)=>name.normalize('NFKD').replace(/\p{M}/gu,'').toLowerCase().replace(/[’‘`]/g,"'").replace(/[.'-]/g,'').replace(/\s+/g,' ').trim();
 export function buildSportsbetRegistry(store:Store,raw:{id:string;sport_key:string;commence_time:string;home_team:string;away_team:string;bookmakers:{key:string;markets:{outcomes:{description?:string}[]}[]}[]},eventId:string,discovery:Receipt,at:string,bookmakers:readonly string[]=['sportsbet']):Registry{
   const fixture=upcomingFixtures(store,at).find(f=>f.event.id===eventId);if(!fixture)throw new Error('Exact current NBA fixture missing');fixtureProof(store,fixture.event,fixture.source,at);retained(store,discovery,at);
   const origin=new URL(discovery.endpoint),observed=JSON.parse((store.db.prepare('SELECT body FROM receipts WHERE hash=?').get(discovery.hash) as {body:string}).body);
@@ -22,7 +23,7 @@ export function buildSportsbetRegistry(store:Store,raw:{id:string;sport_key:stri
   const players=(store.db.prepare("SELECT value FROM meta WHERE key LIKE 'live:roster:%'").all() as {value:string}[]).map(r=>JSON.parse(r.value) as {playerId:string;player:string;teamId:string;source:Receipt;observedAt:string}).filter(p=>[fixture.event.homeId,fixture.event.awayId].includes(p.teamId));
   const descriptions=new Set(raw.bookmakers.filter(b=>bookmakers.includes(b.key)).flatMap(b=>b.markets.flatMap(m=>m.outcomes.map(o=>o.description).filter((s):s is string=>!!s))));
   const registry:Registry={events:[{oddsId:raw.id,event:fixture.event,verifiedAt:at,source:discovery,...(delta?{sourceStartsAt:raw.commence_time,clockBridgePolicy:'unique-team-pair-earliest-clock/1' as const,canonicalFixtureSource:fixture.source}:{})}],players:[]};
-  for(const description of descriptions){const matches=players.filter(p=>p.player===description);if(matches.length!==1)continue;const p=matches[0];try{rosterProof(store,p,at);registry.players.push({eventId,description,playerId:p.playerId,player:p.player,teamId:p.teamId,verifiedAt:at,source:p.source});}catch{/* Exact mapping is unavailable, never guessed. */}}
+  for(const description of descriptions){const exact=players.filter(p=>p.player===description),matches=exact.length?exact:players.filter(p=>conservativePlayerName(p.player)===conservativePlayerName(description));if(matches.length!==1)continue;const p=matches[0];try{rosterProof(store,p,at);registry.players.push({eventId,description,playerId:p.playerId,player:p.player,teamId:p.teamId,verifiedAt:at,source:p.source});}catch{/* Exact mapping is unavailable, never guessed. */}}
   return verifyRegistry(registry,store,at);
 }
 export async function suggestionsCycle(store:Store,config:Config,options:{manual?:boolean;clock?:()=>string;fetcher?:Fetcher;http?:JsonHTTP;transport?:Telegram}={}){

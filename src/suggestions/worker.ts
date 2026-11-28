@@ -1,3 +1,4 @@
+import {refreshOpportunityResearch,closeOpportunityJournal} from '../opportunities/journal';
 import{nextSlateResearch}from'../multi-bookmaker/slate';
 import{fileURLToPath}from'node:url';
 import {appendFileSync,mkdirSync,existsSync,statSync,renameSync} from 'node:fs';
@@ -36,7 +37,8 @@ export async function recurringWorker(store:Store,readConfig:()=>Config,policyPa
       child.once('error',()=>{clearTimeout(timeout);diagnostics=null;childKind=null;log({at:nowISO(),state:'diagnostics_process_error'});});
       child.once('exit',(code,signal)=>{clearTimeout(timeout);diagnostics=null;childKind=null;if(code!==0)log({at:nowISO(),...diagnosticFailure(code,signal,stderr,['BALLDONTLIE_API_KEY','ODDS_API_KEY','TELEGRAM_BOT_TOKEN','TELEGRAM_CHAT_ID','BLUEBUBBLES_PASSWORD'].map(k=>process.env[k]).filter((v):v is string=>!!v)),elapsedMs:Date.now()-lastDiagnosticAttempt});});
     }
+    if(!imminent&&!signal.aborted){try{const research=refreshOpportunityResearch(store,{name:'recurring-market-worker',token:lease});if(research)log({...research,state:'opportunity_research'});}catch(e){log({at:nowISO(),state:'opportunity_research_held',reason:(e as Error).message});}}
     store.set('recurring:worker',{at:nowISO(),state:'waiting'});
     await new Promise<void>(resolve=>{const timer=setTimeout(done,delay);function done(){clearTimeout(timer);signal.removeEventListener('abort',done);resolve();}signal.addEventListener('abort',done,{once:true});if(signal.aborted)done();});
-  }}finally{if(diagnostics){const child=diagnostics;await new Promise<void>(resolve=>{if(child.exitCode!==null){resolve();return;}const timer=setTimeout(resolve,3000);child.once('exit',()=>{clearTimeout(timer);resolve();});child.kill('SIGTERM');});}store.set('recurring:worker',{at:nowISO(),state:'stopped'});store.release('recurring-market-worker',lease);}
+  }}finally{if(diagnostics){const child=diagnostics;await new Promise<void>(resolve=>{if(child.exitCode!==null){resolve();return;}const timer=setTimeout(resolve,3000);child.once('exit',()=>{clearTimeout(timer);resolve();});child.kill('SIGTERM');});}store.set('recurring:worker',{at:nowISO(),state:'stopped'});store.release('recurring-market-worker',lease);closeOpportunityJournal();}
 }

@@ -28,9 +28,9 @@ test('retained price waits only for known missing forecasts inside original quot
  const {retainedPriceWait}=await import('../src/suggestions/recurring');const d=fixture();
  try{const at=d.clock(),deadline=new Date(Date.parse(at)+600000).toISOString(),q={...d.quotes[0],quotedAt:at,expiresAt:new Date(Date.parse(at)+180000).toISOString()};
  assert.equal(retainedPriceWait([q],true,at,deadline),true);assert.equal(retainedPriceWait([q],false,at,deadline),false);
- assert.equal(retainedPriceWait([q],true,new Date(Date.parse(at)+120000).toISOString(),deadline),false);
- assert.equal(retainedPriceWait([q],true,at,new Date(Date.parse(at)+30000).toISOString()),false);
- assert.equal(retainedPriceWait([],true,at,deadline),false);
+ assert.equal(retainedPriceWait([q],true,new Date(Date.parse(at)+120000).toISOString(),deadline),true);
+ assert.equal(retainedPriceWait([q],true,at,new Date(Date.parse(at)+30000).toISOString()),true);
+ assert.equal(retainedPriceWait([q],true,new Date(Date.parse(at)+176000).toISOString(),deadline),false);assert.equal(retainedPriceWait([],true,at,deadline),false);
  }finally{d.close();}
 });
 
